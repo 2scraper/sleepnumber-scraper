@@ -501,7 +501,28 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             session.driver.save_screenshot(f"{args.out}_page{page_num}_debug.png")
         except WebDriverException as e:
             logger.warning("Could not capture screenshot: %s", e)
-        logger.warning("0 rows parsed — saved what the browser saw to %s.", debug_html)
+        # An empty category, a landing page and a broken parser are three
+        # different facts and want three different readers. Kept identical in
+        # all three engines: this is the message a user acts on, and three
+        # spellings of it is how two engines come to describe the same page
+        # differently.
+        if outcome.state == "no_listing":
+            logger.error(
+                "This URL is not a product listing. The site routed and "
+                "rendered it, but its payload carries no product list at all "
+                "— some /categories/... paths are curated landing pages "
+                "rather than listings. Pass a category that actually holds "
+                "products, e.g. --category mattresses. Saved to %s.",
+                debug_html)
+        elif page_flow.is_broken_parse(outcome.state or "content", html, 0):
+            outcome.state = "broken_parse"
+            logger.error("Page %d was SERVED and links to products, and "
+                         "parsed to zero rows. That is a bug in this parser, "
+                         "not an empty category. Saved to %s.",
+                         page_num, debug_html)
+        else:
+            logger.warning("0 rows parsed — saved what the browser saw to %s.",
+                           debug_html)
 
     outcome.rows = rows
     outcome.html = html

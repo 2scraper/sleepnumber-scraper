@@ -11,6 +11,52 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The site's own 404 was recognised only by its status code.**
+  `_NOT_FOUND_MARKERS` read `<title>not found` and `page not found`, and
+  NEITHER is on the page Sleep Number actually serves: `/products/i8` comes
+  back with `<title>Sleep Number</title>`. A capture handed to the parser
+  without a status — a `--dump-html` file, a fixture — therefore came out as
+  `empty`, a claim about the catalogue. Now recognised structurally: React
+  Router puts one key per matched route into `loaderData`, and a URL that
+  matched none has `root` and nothing else (measured: one route key on all 17
+  routed captures, zero on both real 404s). The text marker is corrected to
+  `not found`, which was counted at 0 on every routed page and 2-3 on both
+  404s.
+- **The check that should have caught it tested an invented page.** It built
+  a fixture containing `<title>Not Found</title>` and passed. The suite now
+  runs against the real 404, captured the way a real run captures, and
+  asserts the no-status case the invented fixture hid.
+- **A landing page was reported as an empty category.** Some `/categories/…`
+  URLs are curated pages rather than listings — `/categories/beds-on-sale`
+  renders 320 KB with `category.name = "Sale"` and no `products` key at all.
+  New state `no_listing`, and all three engines say the same sentence about
+  it instead of "zero products", which read as a claim about the shelf.
+- **Only one engine explained a zero-row page.** The `is_broken_parse`
+  branch existed in `playwright_scraper.py` and in neither twin, so the same
+  page produced three different messages. All three now share the wording, and
+  a check asserts it.
+
+### Verified live, not from memory
+
+All four entry points, and Selenium's real limit is narrower than the README
+claimed:
+
+- Playwright, pyppeteer and **Selenium** (through a local relay that adds the
+  proxy credentials) each return 52 rows, exit 0, `complete` — and the three
+  row sets are byte-identical across all 14 compared fields.
+- Playwright over a **Scraping Browser CDP endpoint**: 52 rows, exit 0.
+- **Scraper API with `--cdp-url`**: upstream 200, 882 KB, 52 rows, exit 0,
+  $0.0005. Without it, exit 3 — its own exits are refused.
+- No credential reached any process `argv` during a live run, the browser's
+  own command line included, nor any log, sidecar, output file or debug dump.
+- A blocked run left the previous good output and its `complete` sidecar
+  untouched.
+- `diff_runs.py` separates a real price move from a `price_source` change,
+  and `--fail-on-change` ignores the latter.
+
+
 ## [0.1.0] — 2026-09-17
 
 First release. Reads sleepnumber.com's catalogue — one row per size variant,

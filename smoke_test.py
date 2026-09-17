@@ -74,6 +74,8 @@ DETAIL_HTML = FIXTURES["detail_html"]
 LISTING_EXPECTED = FIXTURES["listing_expected"]
 DETAIL_EXPECTED = FIXTURES["detail_expected"]
 
+NOTFOUND_HTML = FIXTURES["notfound_html"]
+LANDING_HTML = FIXTURES["landing_html"]
 UNDISCOUNTED_HTML = FIXTURES["undiscounted_html"]
 UNDISCOUNTED_EXPECTED = FIXTURES["undiscounted_expected"]
 
@@ -557,16 +559,60 @@ def test_chromium_network_error_page_is_not_content():
 
 @check
 def test_the_sites_own_404_is_not_a_block():
-    """It is a real page the application served, so it must not be retried as
-    though it were transient, and must not be reported as a refusal."""
-    html = ("<html><head><title>Not Found</title>"
-            "<link rel='preconnect' href='https://cdn.sleepnumber.com'></head>"
-            "<body>Page not found"
-            "<script>window.__reactRouterContext = {};</script></body></html>")
-    assert P.detect_page_state(html, 404, "https://www.sleepnumber.com/products/i8") \
-        == "notfound"
+    """Against the page the site REALLY serves, not one written here.
+
+    The first version of this check invented a page with `<title>Not
+    Found</title>` and `page not found` in the body, and passed. Neither
+    string is on the real thing: `/products/i8` comes back with
+    `<title>Sleep Number</title>`, so the marker list matched nothing and a
+    404 was recognised only through its status code — a capture handed to the
+    parser without one came out as `empty`, a claim about the catalogue.
+
+    §21: a guard is only as good as the fixture it runs against, and the
+    fixture that matters is the one fetched the way a real run fetches.
+    """
+    # WITHOUT a status code, which is the case the invented fixture hid.
+    assert P.detect_page_state(NOTFOUND_HTML, None,
+                               "https://www.sleepnumber.com/products/i8") == "notfound"
+    # And with one.
+    assert P.detect_page_state(NOTFOUND_HTML, 404,
+                               "https://www.sleepnumber.com/products/i8") == "notfound"
     assert page_flow.should_retry("notfound") is False
     assert page_flow.counts_as_blocked("notfound") is False
+    # The structural signal that carries it: React Router puts one key per
+    # matched route into loaderData, and a URL that matched none has only
+    # `root`.
+    data = P.loader_data(NOTFOUND_HTML)
+    assert data is not None and not [k for k in data if k != "root"]
+
+
+@check
+def test_a_landing_page_is_not_an_empty_category():
+    """Some /categories/... URLs are curated landing pages, not listings.
+
+    `/categories/beds-on-sale` renders 320 KB with `category.name = "Sale"`
+    and NO `products` key at all — no `total_results`, no `slug`. Reported as
+    "zero products" that reads as a claim about the catalogue and sends the
+    reader to check the shelf instead of the URL.
+
+    The distinction is exact in the payload: `products` ABSENT is a landing
+    page, present-and-empty is an empty category.
+    """
+    assert P.detect_page_state(LANDING_HTML, 200,
+                               "https://www.sleepnumber.com/categories/beds-on-sale") \
+        == "no_listing"
+    assert P.parse_products(LANDING_HTML,
+                            "https://www.sleepnumber.com/categories/beds-on-sale") == []
+    assert page_flow.should_retry("no_listing") is False
+    assert page_flow.counts_as_blocked("no_listing") is False
+    # present-and-empty must NOT be confused with it
+    import copy
+    data = P.loader_data(LANDING_HTML)
+    route = next(k for k in data if k.startswith("routes/categories"))
+    empty = copy.deepcopy(data)
+    empty[route]["category"]["products"] = []
+    assert P._is_landing_page(data) is True
+    assert P._is_landing_page(empty) is False
 
 
 # ===========================================================================
@@ -626,7 +672,8 @@ def test_a_size_filtered_listing_url_is_the_same_request():
 def test_state_policy_is_total_and_consistent():
     """Every state `detect_page_state` can return must have a policy, or an
     engine falls through to a default nobody chose."""
-    produced = {"content", "blocked", "notfound", "empty", "unknown", "captcha"}
+    produced = {"content", "blocked", "notfound", "empty", "unknown", "captcha",
+                "no_listing"}
     for state in produced:
         assert state in page_flow.STATE_POLICY, f"no policy for {state!r}"
     for state, policy in page_flow.STATE_POLICY.items():
@@ -1290,6 +1337,18 @@ def test_engines_produce_the_same_rows_from_the_same_html():
     first = next(iter(outputs.values()))
     for name, rows in outputs.items():
         assert rows == first, f"{name} disagrees with the other engine(s)"
+
+
+@check
+def test_all_engines_describe_a_landing_page_identically():
+    """The message a user acts on. Three spellings of it is how two engines
+    come to describe the same page differently."""
+    needle = "not a product listing"
+    for name in ENGINE_NAMES:
+        text = (ROOT / f"{name}.py").read_text()
+        assert needle in text, (
+            f"{name} does not tell the user that a landing page is not a "
+            f"listing — it would report 'zero products' instead")
 
 
 @check

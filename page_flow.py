@@ -207,6 +207,13 @@ STATE_POLICY: Dict[str, Dict[str, bool]] = {
     # NOT retried. A real category with nothing in it is a correct answer to
     # the question that was asked.
     "empty": {"retry": False, "solve": False, "blocked": False},
+    # NOT retried either, and distinct from `empty` on purpose. The URL was
+    # routed and rendered, but it is not a product listing at all — some
+    # `/categories/…` paths on this site are curated landing pages
+    # (`/categories/beds-on-sale` renders 320 KB with `category.name =
+    # "Sale"` and no `products` key). "Zero products" would read as a claim
+    # about the catalogue; this is a fact about the URL.
+    "no_listing": {"retry": False, "solve": False, "blocked": False},
     # Served, but unrecognised. Worth one more try — it is the only state
     # where a transient really is the likeliest explanation.
     "unknown": {"retry": True, "solve": False, "blocked": False},

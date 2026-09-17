@@ -262,6 +262,49 @@ def main(argv=None):
         out["undiscounted_expected"] = [
             {k: v for k, v in r.__dict__.items() if k != "scraped_at"} for r in rows]
 
+    # ---- the site's REAL 404, and a REAL landing page ----
+    # Both were classified wrongly by an earlier version of this parser, and
+    # both were invisible to the suite because the suite tested a page this
+    # author invented instead. §21: a guard is only as good as the fixture it
+    # runs against, and the fixture that matters is the one fetched the way a
+    # real run fetches.
+    nf = capture("products_i8")
+    if nf:
+        nhtml = nf.read_text(errors="replace")
+        ndata = pp.loader_data(nhtml)
+        assert ndata is not None and not [k for k in ndata if k != "root"], (
+            "the 404 capture has route keys — the site changed, re-read it")
+        # Its own wording, taken verbatim from the real page around the
+        # marker, so the fixture cannot drift from what the site says.
+        idx = nhtml.lower().index("not found")
+        snippet = nhtml[max(0, idx - 120):idx + 120]
+        # NOT named `fixture`: that name already holds the listing fixture
+        # the final summary line reports on, and shadowing it made that line
+        # print the 404's size instead. A cosmetic bug, fixed because the
+        # next person to add a block here would inherit the trap.
+        nfixture = page_html({"root": {}}, title="Sleep Number")
+        nfixture = nfixture.replace("<div id=\"root\"></div>",
+                                    "<div id=\"root\">" + snippet + "</div>")
+        assert pp.detect_page_state(nfixture, None, "u") == "notfound", \
+            "the 404 fixture does not classify as notfound"
+        out["notfound_html"] = nfixture
+
+    landing = capture("beds-on-sale")
+    if landing:
+        lhtml = landing.read_text(errors="replace")
+        ldata = pp.loader_data(lhtml)
+        lroute = next(k for k in ldata if k.startswith("routes/categories"))
+        lcat = ldata[lroute]["category"]
+        assert "products" not in lcat, (
+            "the landing capture now HAS a products key — it became a real "
+            "category, so this fixture is testing the wrong thing")
+        lfixture = page_html({"root": {}, lroute: {"category": dict(lcat)}},
+                             title="Sale | Sleep Number")
+        assert pp.detect_page_state(lfixture, None, "u") == "no_listing", \
+            "the landing fixture does not classify as no_listing"
+        out["landing_html"] = lfixture
+        out["landing_category_name"] = lcat.get("name")
+
     pathlib.Path(args.out).write_text(json.dumps(out, indent=1, ensure_ascii=False))
     print(f"wrote {args.out}: listing {len(out['listing_expected'])} rows, "
           f"detail {len(out['detail_expected'])} rows, "

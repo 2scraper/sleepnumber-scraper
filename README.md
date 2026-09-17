@@ -273,9 +273,28 @@ go null *together* rather than dragging a consumer's average toward zero.
 the latter answers 200. `/products/i8` looks entirely plausible, appears in
 search results, and returns the site's 404.
 
+**Not every `/categories/…` URL is a listing.** Some are curated landing
+pages: `/categories/beds-on-sale` renders 320 KB with `category.name = "Sale"`
+and **no `products` key at all** — no `total_results`, no `slug`. The scraper
+reports this as `no_listing` and says so in as many words, rather than "zero
+products", which would read as a claim about the catalogue and send you to
+check the shelf instead of the URL. The distinction is exact in the payload:
+`products` absent is a landing page, present-and-empty is an empty category.
+
+**A rotating proxy exit occasionally misses.** A 2Captcha gateway with no
+`-region-` token in its login rotates per request. Measured 2026-09-17 over
+15 requests through one: **14 answered and all 14 were HTTP 200**, one never
+connected. In a separate capture run of nine URLs, one came back 403 and one
+timed out. So refusals are rare but real — `--retries` and
+`--proxy-block-retries` exist for exactly this, and a pinned `-region-` exit
+avoids it.
+
 **The site's 404 is a full, 200-KB page** with site chrome and a JSON-LD
-`@graph` block. It is told apart by its own wording plus the absence of any
-product in the payload — never by size.
+`@graph` block, and its `<title>` is just "Sleep Number" — so a title check
+sees nothing wrong with it. It is told apart structurally: React Router puts
+one key per matched route into `loaderData`, and a URL that matched no route
+has `root` and nothing else. Measured across 17 routed captures and both real
+404s: one route key on every routed page, zero on both 404s.
 
 **reCAPTCHA is configured on this site and never rendered.** The base
 template ships a reCAPTCHA loader, so `recaptcha` and `captcha` each occur
@@ -325,17 +344,30 @@ cloudfront` with `server: Fly/…`, a refusal `Error from cloudfront` with
 `chromedriver`'s `--proxy-server` takes a bare `host:port` with nowhere to put
 a password. The engine strips the credentials and warns — it will not let you
 believe a `user:pass` URL is doing something. On most sites that is an
-inconvenience; **on this one it means Selenium cannot work from a datacentre
-at all**, because the proxy is the whole point. It reports exit 3 with the
+inconvenience; on this one the proxy is the whole point, so a credentialled
+proxy leaves Selenium with no way through and it reports exit 3 with the
 reason rather than a misleading "0 products".
 
-Selenium is usable here from a residential connection, or through a proxy
-that authenticates by source IP instead of by password.
+**The engine itself is fine, and that is measured rather than assumed.** Give
+it a proxy that needs no password and it returns the same rows as the other
+two: verified 2026-09-17 through a local relay that adds the credentials
+upstream — **52 rows, exit 0, `status: complete`, byte-identical to
+Playwright's output**. So this is a credential-plumbing limit, not a broken
+engine.
 
-Selenium also cannot use an authenticated remote CDP endpoint: Playwright's
-`connect_over_cdp` and pyppeteer's `browserWSEndpoint` take a full
-`ws://user:pass@host:port` and authenticate on the WebSocket upgrade;
-`debuggerAddress` takes a bare `host:port`.
+Three ways to use Selenium here:
+
+- a residential connection, with no proxy at all;
+- a proxy that authenticates by **source IP** rather than by password;
+- a local forwarding proxy that injects the credentials, then
+  `--proxy http://127.0.0.1:PORT`.
+
+Selenium also cannot use an authenticated remote CDP endpoint, and refuses it
+explicitly with exit 2 rather than silently stripping it.
+
+Playwright's `connect_over_cdp` and pyppeteer's `browserWSEndpoint` take a
+full `ws://user:pass@host:port` and authenticate on the WebSocket upgrade;
+`debuggerAddress` takes a bare `host:port`, which is the whole difference.
 
 ### The Scraper API needs a Scraping Browser exit
 
@@ -347,6 +379,17 @@ other. Route the fetch through a Scraping Browser session:
 python3 scraper_api_client.py \
   --url https://www.sleepnumber.com/categories/mattresses \
   --cdp-url "$SLEEPNUMBER_CDP_ENDPOINT"
+```
+
+Verified 2026-09-17: upstream HTTP 200, 882 KB, **52 rows, exit 0**, billed
+$0.0005 — the same rows the browser engines produce. A Scraping Browser
+profile's credentials last about a day, so mint one when you need it rather
+than keeping it in `.env`:
+
+```bash
+python3 tools/browser_profile_client.py accounts
+python3 tools/browser_profile_client.py connection --account-id ID \
+    --profile-id PID --no-proxy --write-env
 ```
 
 A refusal is **not retried** — a CloudFront deny is a property of the exit

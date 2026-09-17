@@ -698,7 +698,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # An empty category and a broken parser are different facts and want
         # different readers. Reported as "0 products", a parsing failure sends
         # someone to check the URL instead of the parser — so name it.
-        if page_flow.is_broken_parse(outcome.state or "content", html, 0):
+        if outcome.state == "no_listing":
+            logger.error(
+                "This URL is not a product listing. The site routed and "
+                "rendered it, but its payload carries no product list at all "
+                "— some /categories/... paths are curated landing pages "
+                "rather than listings. Pass a category that actually holds "
+                "products, e.g. --category mattresses. Saved to %s.",
+                debug_html)
+        elif page_flow.is_broken_parse(outcome.state or "content", html, 0):
             outcome.state = "broken_parse"
             logger.error("Page %d was SERVED and links to products, and "
                          "parsed to zero rows. That is a bug in this parser, "

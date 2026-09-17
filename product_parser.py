@@ -215,9 +215,24 @@ SITE_ASSET_MARKERS: Tuple[str, ...] = (
 # the asset host — so every structural signal above says "served", correctly.
 # It is told apart by its own wording plus the absence of any product in the
 # payload, never by size.
+# MEASURED, not guessed, and the first version of this list was WRONG —
+# which is the whole argument for counting (§18). It read `<title>not found`
+# and `page not found`, and NEITHER occurs on the page this site actually
+# serves for a missing product: `/products/i8` comes back with
+# `<title>Sleep Number</title>`, so the list matched nothing and a 404 was
+# only ever recognised through its status code. A capture handed to the
+# parser without one — a `--dump-html` file, a fixture — came out as `empty`,
+# i.e. as a claim about the catalogue.
+#
+# Counted 2026-09-17 over 17 captures the application routed (served
+# listings, a landing page, detail pages, two locales) and the two real 404s:
+#
+#   "not found"   0 on every one of the 17   |   2 and 3 on the two 404s
+#
+# So the bare string discriminates perfectly where the title-anchored version
+# discriminated nothing.
 _NOT_FOUND_MARKERS: Tuple[str, ...] = (
-    "<title>not found",
-    "page not found",
+    "not found",
 )
 
 # Route-key prefixes whose loader data carries catalogue objects. The key is
@@ -788,6 +803,22 @@ def _is_blank_document(html: str) -> bool:
     return not re.sub(r"<[^>]+>", "", body.group(1)).strip()
 
 
+def _is_landing_page(data: Dict[str, Any]) -> bool:
+    """A routed listing URL that carries no product list at all.
+
+    `category.products` ABSENT is a landing page; present-and-empty is an
+    empty category. Both render, both are 200, and only one of them is a
+    statement about the catalogue.
+    """
+    for key, value in (data or {}).items():
+        if not isinstance(value, dict) or not key.startswith(_LISTING_ROUTE_PREFIXES):
+            continue
+        category = value.get("category")
+        if isinstance(category, dict) and "products" not in category:
+            return True
+    return False
+
+
 def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
                       headers: Optional[Dict[str, str]] = None) -> str:
     """One of: content | blocked | notfound | empty | unknown.
@@ -872,11 +903,33 @@ def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
     # 4. The site's own 404. Checked AFTER the asset test on purpose: it is a
     #    real page the application served, so it is not a block, and it must
     #    not be retried as though it were transient.
+    #
+    #    THE STRUCTURAL SIGNAL LEADS, because it is the stronger one and
+    #    because it does not depend on the caller having a status code to
+    #    hand. React Router puts one key per matched route into `loaderData`;
+    #    a URL that matched no route has `root` and nothing else. Counted
+    #    2026-09-17: exactly one route key on all 17 routed captures, zero on
+    #    both real 404s.
+    if data is not None and not [k for k in data if k != "root"]:
+        return "notfound"
     if status == 404 or any(marker in lowered for marker in _NOT_FOUND_MARKERS):
         return "notfound"
 
-    # 5. Served, application rendered, no products. A real category with
-    #    nothing in it. Not a failure and not worth a retry.
+    # 5. The application routed this URL but it carries no product LIST at
+    #    all — distinct from a list that is empty, and the difference is what
+    #    the caller should be told.
+    #
+    #    Some `/categories/…` URLs are curated landing pages rather than
+    #    listings: `/categories/beds-on-sale` renders 320 KB with
+    #    `category.name = "Sale"` and no `products` key, no `total_results`
+    #    and no `slug` — the keys a real category carries. Reported as "zero
+    #    products" it reads as "this category is empty", which sends the
+    #    reader to check the catalogue instead of the URL.
+    if data is not None and _is_landing_page(data):
+        return "no_listing"
+
+    # 6. Served, application rendered, a real product list with nothing in
+    #    it. Not a failure and not worth a retry.
     if data is not None:
         return "empty"
 
