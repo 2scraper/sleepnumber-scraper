@@ -60,9 +60,20 @@ requests answer 200 — measured the same day on two:
 | US residential (Charter, Ohio, AS10796) | **200**, full catalogue |
 
 So the block is datacentre **reputation**, not geography — a UK address is
-served. Prefer a **US** exit anyway: this is a US storefront, and a US exit
-is what the prices, currency and availability in this README were measured
-through.
+served.
+
+**And the exit country does not change the data.** Parsing the same category
+captured through each exit: 52 rows both times, the same 52 skus, and **zero
+rows differing in price, original price or currency** — everything is USD
+from both. So a rotating residential exit that lands outside the US is not a
+correctness problem here; it is a US-only storefront quoting one currency to
+everyone it serves.
+
+That matters in practice because a 2Captcha gateway without a `-region-`
+token in the login rotates: the same credential was measured exiting in GB
+(TalkTalk) and, minutes later, in US Pennsylvania (Verizon). Both worked and
+both returned identical rows. Pin a region only if you want a *reproducible*
+exit for other reasons, not because the data needs it.
 
 There is **no captcha to solve here.** The refusal carries no
 `x-amzn-waf-action` header, no challenge iframe and no widget of any kind, so
