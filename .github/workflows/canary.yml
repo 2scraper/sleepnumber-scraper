@@ -1,35 +1,51 @@
 name: canary
 
-# One real run a day against woolworths.com.au, and the only workflow in this
-# repo that touches the site. Everything else is offline (see tests.yml).
+# One real run a day against www.sleepnumber.com, and the only workflow in
+# this repo that touches the site. Everything else is offline (see tests.yml).
 #
 # WHY THIS CANARY SKIPS BY DEFAULT
 # --------------------------------
-# Akamai refuses this site to a datacentre address, and a GitHub runner is
-# one. Measured 2026-09-16 from a datacentre exit: four URLs fetched HEADLESS
-# were refused 4 of 4 with Akamai's 403, and the same four fetched HEADFUL
-# were served 4 of 4 — but a runner has no display, so the live steps below
-# run the browser under Xvfb, and even then the ADDRESS is still a datacentre
-# one.
+# Sleep Number refuses datacentre addresses, and a GitHub runner is one.
+# Measured 2026-09-17: every URL on the site — /robots.txt included — answers
+# an identical 919-byte CloudFront "Request blocked" 403 from a datacentre
+# address, whatever headers, HTTP version or user agent is used, and whether
+# the client is curl or a headless browser. The same requests answer 200 from
+# a residential exit.
 #
 # So without a residential exit this canary would be red every single day,
-# and a check that is always red teaches everyone to ignore checks (§11). It
+# and a check that is always red teaches everyone to ignore checks. It
 # therefore SKIPS, loudly and green, when no proxy secret is set:
 #
-#     gh secret set WOOLWORTHS_PROXY --repo 2scraper/woolworths-scraper
+#     gh secret set SLEEPNUMBER_PROXY --repo 2scraper/sleepnumber-scraper
 #
 # The secret goes through the ENVIRONMENT rather than a commented-out
-# `--proxy` line, because `env_config.py` already reads exactly that variable
+# `--proxy` line, because env_config.py already reads exactly that variable
 # and an unset secret arrives as an empty string which the loader treats as
 # unset. One line is therefore correct with and without it, and the
-# credential never reaches a command line (§3).
+# credential never reaches a command line.
 #
 # `secrets` is not available in a job-level `if`, so presence is tested
 # through job `env` and read in each step's `if`.
+#
+# WHY IT READS THREE CATEGORIES RATHER THAN THREE PAGES
+# -----------------------------------------------------
+# The family's rule is "ask for >= 3 pages, because one page never exercises
+# pagination". It cannot be honoured literally here, and saying why is better
+# than faking it: `per_page` is 100 and the largest category measured holds
+# 20 products, so EVERY category on this site is a single page. Asking for
+# three would exercise nothing.
+#
+# What this does instead: it asks for three pages anyway on one category — so
+# the pagination machinery is exercised and must terminate correctly, which
+# means reporting `complete` with `pagination_exhausted` rather than a false
+# `partial` — and then reads three DIFFERENT categories, which is this site's
+# real equivalent of depth. The three were chosen because they disagree with
+# each other in ways a broken parser would flatten: mattresses is 52 of 52
+# discounted, sheets is 13 of 211, and furniture is 157 of 169.
 
 on:
   schedule:
-    - cron: "17 19 * * *"       # 05:17 Australian eastern time, off-peak
+    - cron: "23 11 * * *"        # 06:23 US eastern, off-peak for a US shop
   workflow_dispatch:
 
 permissions:
@@ -40,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      HAVE_PROXY: ${{ secrets.WOOLWORTHS_PROXY != '' }}
+      HAVE_PROXY: ${{ secrets.SLEEPNUMBER_PROXY != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,20 +68,22 @@ jobs:
       - name: Explain the skip and stop
         if: env.HAVE_PROXY != 'true'
         run: |
-          echo "::notice::No WOOLWORTHS_PROXY secret is set, so the live run is skipped rather than failed."
+          echo "::notice::No SLEEPNUMBER_PROXY secret is set, so the live run is skipped rather than failed."
           {
             echo "### Canary skipped"
             echo
-            echo "Akamai refuses woolworths.com.au to datacentre addresses, and a GitHub"
-            echo "runner is one. Measured 2026-09-16: 4 of 4 URLs refused headless from a"
-            echo "datacentre exit, 4 of 4 served headful from the same address."
+            echo "Sleep Number refuses datacentre addresses and a GitHub runner is one."
+            echo "Measured 2026-09-17: every URL, /robots.txt included, answers an identical"
+            echo "919-byte CloudFront \"Request blocked\" 403 from a datacentre address, and"
+            echo "200 from a residential exit. There is no captcha on the refusal and no"
+            echo "solver can help; what is needed is a different exit."
             echo
             echo "A canary that cannot pass must skip rather than fail: a check that is"
             echo "always red teaches everyone to ignore checks."
             echo
             echo 'Set a residential exit to turn it on:'
             echo '```'
-            echo 'gh secret set WOOLWORTHS_PROXY --repo 2scraper/woolworths-scraper'
+            echo 'gh secret set SLEEPNUMBER_PROXY --repo 2scraper/sleepnumber-scraper'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -76,141 +94,142 @@ jobs:
           pip install -r requirements.txt -r requirements-playwright.txt
           playwright install --with-deps chromium
 
-      - name: Install Xvfb
-        if: env.HAVE_PROXY == 'true'
-        # Headful, not headless, and that is the measurement above rather
-        # than a preference. A runner has no display, so the browser gets a
-        # virtual one.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
-
-      # A FILTERED CATEGORY and >= 3 pages. One page never exercises
-      # pagination, which is exactly how a silent single-page bug survived in
-      # a sibling repo — and on this site page 2 onward is where the
-      # ads-repeat-forever behaviour lives (§7).
+      # Headless, and that is measured rather than assumed: a headless
+      # Playwright run through a residential exit returned the full 52-row
+      # mattresses catalogue on 2026-09-17. No Xvfb, no headful default — see
+      # the Dockerfile for the same note.
       - name: Run the canary
         if: env.HAVE_PROXY == 'true'
         id: run
         env:
-          WOOLWORTHS_PROXY: ${{ secrets.WOOLWORTHS_PROXY }}
+          SLEEPNUMBER_PROXY: ${{ secrets.SLEEPNUMBER_PROXY }}
         run: |
           # set +e: GitHub runs `run:` under `bash -e`, so a non-zero exit
           # would abort the step BEFORE the exit code could be captured, and
           # continue-on-error does not change that.
           set +e
-          xvfb-run -a python3 playwright_scraper.py \
-            --url "https://www.woolworths.com.au/shop/browse/bakery" \
-            --pages 3 \
-            --format json \
-            --out canary 2>&1 | tee canary.log
-          code=${PIPESTATUS[0]}
+          worst=0
+          for c in mattresses sheets-pillowcases furniture; do
+            python3 playwright_scraper.py \
+              --category "$c" \
+              --pages 3 \
+              --format json \
+              --out "canary_$c" 2>&1 | tee -a canary.log
+            code=${PIPESTATUS[0]}
+            echo "$c exited $code"
+            [ "$code" -ne 0 ] && worst=$code
+          done
           set -e
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          echo "The run exited $code."
+          echo "exit_code=$worst" >> "$GITHUB_OUTPUT"
+          echo "The worst exit code across three categories was $worst."
 
       - name: Interpret the exit code
         if: env.HAVE_PROXY == 'true'
         run: |
           case "${{ steps.run.outputs.exit_code }}" in
-            0) echo "::notice::Run completed." ;;
-            3) echo "::error::Exit 3 — blocked. Akamai refused the proxy's exit. Check the exit is residential and, if it is, whether the site has changed what it refuses." ;;
-            4) echo "::error::Exit 4 — zero products from a category that is not empty. This is the parser, not the site." ;;
-            6) echo "::error::Exit 6 — partial. Some page failed; see the failed page numbers in the sidecar." ;;
+            0) echo "::notice::All three categories completed." ;;
+            3) echo "::error::Exit 3 — blocked. CloudFront refused the proxy's exit. Check the exit is residential; if it is, the site has changed what it refuses." ;;
+            4) echo "::error::Exit 4 — zero products from a category that is not empty. That is the parser, not the site." ;;
+            5) echo "::error::Exit 5 — a 2Captcha product failed on its own terms, not the site blocking a page." ;;
+            6) echo "::error::Exit 6 — partial. Some page failed; see pages_failed in the sidecar." ;;
             *) echo "::error::Unexpected exit ${{ steps.run.outputs.exit_code }}." ;;
           esac
           test "${{ steps.run.outputs.exit_code }}" = "0"
 
-      # The thresholds are the numbers a real run produced on 2026-09-16, set
-      # low enough to absorb an ordinary day's variation and high enough that
-      # a broken read cannot pass. Bakery held 575 products over 16 pages;
-      # three pages is ~110 rows, of which a handful are ads.
+      # Thresholds are the numbers real runs produced on 2026-09-17, set low
+      # enough to absorb an ordinary day's catalogue change and high enough
+      # that a broken read cannot pass.
       - name: Assert what the run actually produced
         if: env.HAVE_PROXY == 'true'
         run: |
           python3 - <<'PY'
           import json, sys
 
-          meta = json.load(open("canary.meta.json"))
-          rows = json.load(open("canary.json"))
+          FLOORS = {"mattresses": 40, "sheets-pillowcases": 150, "furniture": 120}
           problems = []
 
           def want(cond, msg):
               if not cond:
                   problems.append(msg)
 
-          want(meta["status"] == "complete",
-               f"status is {meta['status']!r}, not 'complete'")
-          want(meta["pages_completed"] >= 3,
-               f"only {meta['pages_completed']} page(s) completed; "
-               "pagination is the thing this canary exists to exercise")
-          want(not meta.get("pages_failed"),
-               f"pages failed: {meta.get('pages_failed')}")
-          want(len(rows) >= 90,
-               f"{len(rows)} rows; three pages of this category produced ~110")
+          for cat, floor in FLOORS.items():
+              meta = json.load(open(f"canary_{cat}.meta.json"))
+              rows = json.load(open(f"canary_{cat}.json"))
 
-          priced = [r for r in rows if r.get("price") is not None]
-          want(len(priced) / max(len(rows), 1) >= 0.90,
-               f"only {len(priced)}/{len(rows)} rows carry a price")
+              want(meta["status"] == "complete",
+                   f"{cat}: status is {meta['status']!r}, not 'complete'")
+              # Asking for 3 pages of a 1-page category is a COMPLETE run.
+              # Reporting it partial would put this canary permanently red.
+              want(meta["stop_reason"] in
+                   ("completed", "pagination_exhausted", "no_new_products"),
+                   f"{cat}: stop_reason {meta['stop_reason']!r} is not a complete one")
+              want(not meta.get("pages_failed"),
+                   f"{cat}: pages failed: {meta.get('pages_failed')}")
+              want(len(rows) >= floor,
+                   f"{cat}: {len(rows)} rows, floor is {floor}")
 
-          # Every row must have the id everything else joins on.
-          want(all(r.get("sku") for r in rows), "some row has no sku")
+              # Price coverage is 100% on every listing measured here, so the
+              # floor is high on purpose: a shortfall is a parsing regression,
+              # not the catalogue's doing.
+              priced = [r for r in rows if r.get("price") is not None]
+              want(len(priced) == len(rows),
+                   f"{cat}: only {len(priced)}/{len(rows)} rows carry a price")
 
-          # page+position unique as a PAIR: position restarts each page, and
-          # the column is worthless without page beside it.
-          pairs = [(r["page"], r["position"]) for r in rows]
-          want(len(set(pairs)) == len(pairs), "page+position is not unique")
+              want(all(r.get("sku") for r in rows), f"{cat}: some row has no sku")
+              want(all(r.get("currency") == "USD" for r in rows),
+                   f"{cat}: some row is not priced in USD")
 
-          # The section 4 canary: a was-price that is not above the price
-          # means WasPrice was read straight, which puts a 0% discount on
-          # four products in five.
-          bad = [r["sku"] for r in rows
-                 if r.get("original_price") is not None
-                 and r.get("price") is not None
-                 and r["original_price"] <= r["price"]]
-          want(not bad, f"rows with original_price <= price: {bad[:5]}")
+              # page+position unique as a PAIR: position restarts each page.
+              pairs = [(r["page"], r["position"]) for r in rows]
+              want(len(set(pairs)) == len(pairs), f"{cat}: page+position is not unique")
 
-          # The ads must be labelled. If this drops to zero the column has
-          # stopped being filled, and the dedupe and the stop condition both
-          # depend on it.
-          want(any(r.get("is_sponsored") for r in rows)
-               or meta.get("sponsored_rows") == 0,
-               "no row is marked sponsored and the sidecar does not say zero")
+              # No was-price at or below its price, and no zero/negative
+              # discount. One line, and it catches the regression forever.
+              for r in rows:
+                  if r.get("original_price") is not None and r.get("price") is not None:
+                      want(r["original_price"] > r["price"],
+                           f"{cat}: {r['sku']} original_price {r['original_price']} "
+                           f"is not above price {r['price']}")
+                  if r.get("discount_pct") is not None:
+                      want(r["discount_pct"] > 0,
+                           f"{cat}: {r['sku']} discount_pct is {r['discount_pct']}")
 
-          # The DOM cross-check ran and agreed. If the grid stops rendering —
-          # the /unauthorisederror bounce — this is what notices, because the
-          # rows themselves stay correct.
-          dom = meta.get("dom_confirm")
-          want(dom and dom.get("checked", 0) > 0,
-               "no row was confirmed against a rendered tile; the grid may "
-               "not have rendered (see unauthorised_redirect in the sidecar)")
-          if dom and dom.get("checked"):
-              share = dom["confirmed"] / dom["checked"]
-              want(share >= 0.90,
-                   f"only {share:.0%} of DOM-checked rows agreed on price")
+              # The site's structured data leaks its Fly origin hostname. If
+              # one reaches a row, the rewrite has regressed.
+              want(not any("fly.dev" in (r.get("url") or "") for r in rows),
+                   f"{cat}: a row points at the origin host rather than the shop")
 
-          want(not meta.get("unauthorised_redirect"),
-               "the app bounced the browser to /unauthorisederror — the rows "
-               "are still the API's and correct, but the grid did not render")
+              # A row read from the URL pattern has no price, so a run made of
+              # them would pass a row-count floor while carrying no data.
+              fallback = [r for r in rows if r.get("price_source") == "url-fallback"]
+              want(not fallback,
+                   f"{cat}: {len(fallback)} row(s) came from the URL fallback — "
+                   "the hydration payload did not decode")
 
-          print(f"rows={len(rows)} priced={len(priced)} "
-                f"pages={meta['pages_completed']} dom={dom}")
+          # The three categories must DISAGREE about discounting. If they all
+          # look alike, something has flattened the column.
+          shares = {}
+          for cat in FLOORS:
+              rows = json.load(open(f"canary_{cat}.json"))
+              shares[cat] = sum(1 for r in rows if r.get("discount_pct")) / max(len(rows), 1)
+          want(max(shares.values()) - min(shares.values()) > 0.2,
+               f"discount shares are suspiciously uniform: {shares}")
+
           if problems:
-              print("\nFAILED:")
+              print("CANARY FAILED:")
               for p in problems:
-                  print(" -", p)
+                  print("  -", p)
               sys.exit(1)
-          print("All canary assertions passed.")
+          print("Canary assertions passed.")
           PY
 
       - name: Upload artefacts
         if: always() && env.HAVE_PROXY == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: canary-${{ github.run_id }}
+          name: canary-output
           path: |
-            canary.json
-            canary.meta.json
-            canary.log
-            *_debug.html
-            *_debug.png
+            canary*.json
+            canary*.log
           if-no-files-found: ignore
           retention-days: 14

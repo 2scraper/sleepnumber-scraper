@@ -679,7 +679,7 @@ def scrape(args) -> int:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Transfermarkt scraper (pyppeteer edition)")
+    p = argparse.ArgumentParser(description="Sleep Number scraper (pyppeteer edition)")
     p.add_argument("--mode", choices=list(page_flow.MODES), default="listing",
                    help="listing (default) or product. See "
                         "playwright_scraper.py --help for the full text; the "
@@ -773,7 +773,7 @@ if __name__ == "__main__":
         sys.exit(2)
     except RemoteAPIError as e:
         # The Fingerprint API or the --cdp-endpoint connect failed on their
-        # own terms -- not Transfermarkt blocking a page (exit 3) and not an
+        # own terms -- not CloudFront refusing a page (exit 3) and not an
         # unexpected bug (exit 1, which still gets a real traceback). See
         # output_writer.RemoteAPIError.
         logger.error("%s", e)

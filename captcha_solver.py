@@ -6,12 +6,14 @@ Shared helper used by all three scrapers (Playwright / Selenium / Puppeteer).
 Detection runs after EVERY page navigation in the main loop of all three
 scrapers, regardless of what URL was requested (category hub, product page,
 sign-in, checkout, anything) — this is deliberate, not scoped to any one
-page. If Transfermarkt renders a reCAPTCHA/Turnstile challenge anywhere —
-this fires. Live research for this repo (2026-09-10, one proxied fetch each
-of a ranking page, a player profile, a squad page and a transfer list, all
-served without any challenge or 403) found none, but that is a much smaller
-sample than the family's other members ran before writing this note — see
-the closing section of this file for what that does and does not license.
+page. If Sleep Number renders a reCAPTCHA / AWS WAF / Turnstile challenge
+anywhere — this fires.
+
+NO CHALLENGE HAS EVER BEEN OBSERVED ON THIS SITE. The closing section of this
+file says precisely what that does and does not license; in one sentence, the
+site's refusal is a CloudFront deny carrying no widget, so no solver can help
+with it — while reCAPTCHA IS configured on the site, so "not rendered to us"
+is a weaker claim than "not there".
 
 Flow:
   1. Both detectors run and are reconciled (see reconcile_detections) to decide
@@ -140,10 +142,14 @@ class CaptchaChallenge:
                      running it. No widget, nothing to show a human.
 
         Both carry `window.gokuProps`, which is why reading the props alone
-        cannot tell them apart. `captcha.js` can. Measured on
-        www.transfermarkt.com 2026-09-17: challenge-action pages came back
-        with challengeScript present and captchaScript absent, and the
-        captcha-action pages had both.
+        cannot tell them apart. `captcha.js` can.
+
+        THE MEASUREMENT BEHIND THIS IS A SIBLING'S, NOT THIS SITE'S, and is
+        named as one because a number inherited is not a number measured
+        (CLAUDE.md §13): on www.transfermarkt.com, 2026-09-17,
+        challenge-action pages came back with challengeScript present and
+        captchaScript absent, and captcha-action pages had both. Sleep Number
+        has never been observed serving either.
         """
         return "captcha" if self.captcha_script else "challenge"
 
@@ -182,10 +188,20 @@ AWS_WAF_COOKIE = "aws-waf-token"
 def detect_aws_waf(html: str, page_url: str = "") -> Optional[CaptchaChallenge]:
     """An AWS WAF CAPTCHA challenge read out of served HTML, or None.
 
-    Measured on www.transfermarkt.com 2026-09-16: the site sits behind AWS
-    WAF on CloudFront, and a plain datacentre-IP request is answered with
-    this challenge -- HTTP 405, `x-amzn-waf-action: captcha`, a 2331-byte
-    body -- on most attempts.
+    KEPT AS INSURANCE, NOT BECAUSE THIS SITE SERVES ONE. Sleep Number is
+    behind CloudFront, the same edge that can front AWS WAF, so the detector
+    is cheap to keep and would be expensive to be missing. But what this site
+    actually answers a datacentre address with is a plain CloudFront DENY —
+    919 bytes, no `x-amzn-waf-action` header, no widget — and not a
+    challenge. See this file's closing section.
+
+    The shape below was measured on a SIBLING repo's target and is named as
+    that repo's measurement rather than restated as this one's: on
+    www.transfermarkt.com, 2026-09-16, a plain datacentre-IP request was
+    answered with an AWS WAF challenge — HTTP 405, `x-amzn-waf-action:
+    captcha`, a 2331-byte body — on most attempts. If sleepnumber.com ever
+    starts doing the same, this fires and the challenge is solvable with
+    `AmazonTaskProxyless`.
 
     Everything the solver needs is in the served markup, so unlike the
     Cloudflare Turnstile case this family documents, no init script and no
@@ -897,38 +913,47 @@ solve_recaptcha_v3 = solve_recaptcha
 
 
 # ===========================================================================
-# What is deliberately NOT here
+# What is deliberately NOT here, and what that does NOT mean
 # ===========================================================================
-# No first-party image captcha or custom widget is ported here: nothing in
-# this family's other members' bespoke solvers (a JPEG-of-distorted-text
-# form is one example) was ever observed on Transfermarkt, and porting one
-# on spec would be dead code with no fixture to test it against.
+# No first-party image captcha or custom widget is ported here: nothing of
+# the kind has been observed on sleepnumber.com, and porting one on spec
+# would be dead code with no fixture to test it against.
 #
-# What was measured, on 2026-09-10 from this repo's own build/test
-# environment: neither a direct `requests` call nor a local Playwright
-# browser could reach www.transfermarkt.com at all — both failed at the
-# TCP/TLS layer, and a plain `requests.get` through the sandbox's own egress
-# proxy came back with the proxy's OWN "403 Forbidden" on the CONNECT
-# tunnel, never reaching the site. That is this sandbox's outbound
-# allowlist refusing the destination, not Transfermarkt refusing the
-# request — confirmed by ruling it out, not assumed. A PROXIED fetch of the
-# same URLs (through 2captcha's own fetch infrastructure, which sits
-# outside this sandbox) returned normal 200 pages every time with no
-# challenge and no captcha markers. So the only live evidence this repo has
-# is: Transfermarkt served every page it was asked for, without a captcha,
-# over a working proxied path. What was NOT established is how the site
-# treats a bare datacentre IP with no proxy at all, or what a real user's
-# browser sees on a residential connection — this repo's build sandbox
-# cannot test either. Do not port the OTHER family members' "datacentre
-# addresses get refused" conclusion onto Transfermarkt without measuring it
-# here; it was true for them and is simply unknown for this site. See
-# product_parser.detect_bot_challenge for how a real captcha, once observed,
-# would be told apart from a network-level refusal.
+# WHAT WAS MEASURED, 2026-09-17, and it is worth being exact because the most
+# expensive error this family has ever shipped was a SENTENCE about what a
+# solver can do:
 #
-# The reCAPTCHA / hCaptcha / Turnstile machinery above IS kept, and that is a
+#   * From a datacentre address, every URL on www.sleepnumber.com answers an
+#     identical 919-byte CloudFront "Request blocked" 403. It carries NO
+#     `x-amzn-waf-action` header, no challenge iframe, no `data-sitekey` and
+#     no widget of any kind. There is nothing on that page for any solver, at
+#     any price, to work on — the request never reached Sleep Number. This is
+#     the one case CLAUDE.md §19 says it is honest to call unsolvable, and it
+#     is unsolvable because the PAGE carries no widget, not because of any
+#     limit on what 2Captcha can solve.
+#   * From a residential exit the same URLs answer 200 with the catalogue, no
+#     challenge and no captcha markers.
+#
+# So: what is needed here is a different EXIT, not a solve. That is a
+# statement about this site's refusal, and it is NOT a statement about any
+# vendor's capability. 2Captcha solves reCAPTCHA v2/v3, reCAPTCHA Enterprise
+# (`RecaptchaV2EnterpriseTaskProxyless`), Cloudflare Turnstile
+# (`TurnstileTaskProxyless`) and AWS WAF (`AmazonTaskProxyless`), and if this
+# site ever starts serving one of those, the answer is to implement the task
+# type — not to write that it cannot be solved.
+#
+# AND NOTE WHAT IS ACTUALLY ON THE PAGE. Sleep Number ships a reCAPTCHA
+# loader in its base template: `recaptcha` and `captcha` each occur exactly
+# once on EVERY page, served and refused alike (counted across four served
+# pages, two 404s and two refusals). So reCAPTCHA is CONFIGURED here and is
+# simply not rendered to an anonymous visitor reading listings. "We have not
+# met one" is a much weaker claim than "there is none", which is why the
+# detection below stays broad rather than being deleted as unused.
+#
+# The reCAPTCHA / AWS WAF / Turnstile machinery above IS kept, and that is a
 # deliberate asymmetry rather than an inconsistency. Detection stays broad
 # because which challenge a visitor meets depends on the exit country and on
 # what the address has been doing — a narrow list is how a challenge gets
-# reported as an empty page months later. A solver for a challenge this site
-# has never been observed to serve is dead code; a DETECTOR for one is cheap
-# insurance. See the family note in CLAUDE.md.
+# reported as an empty page months later. A DETECTOR for a challenge this
+# site has not served is cheap insurance; see page_flow.STATE_POLICY for why
+# a block here is marked retryable but NOT solvable.

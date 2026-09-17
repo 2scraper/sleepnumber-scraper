@@ -626,7 +626,7 @@ def scrape(args) -> int:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Transfermarkt scraper (Selenium edition)")
+    p = argparse.ArgumentParser(description="Sleep Number scraper (Selenium edition)")
     p.add_argument("--mode", choices=list(page_flow.MODES), default="listing",
                    help="listing (default) or product. See "
                         "playwright_scraper.py --help for the full text; the "
@@ -703,7 +703,7 @@ if __name__ == "__main__":
         sys.exit(2)
     except RemoteAPIError as e:
         # The Fingerprint API call failed on its own terms -- not
-        # Transfermarkt blocking a page (exit 3) and not an unexpected bug
+        # CloudFront refusing a page (exit 3) and not an unexpected bug
         # (exit 1, which still gets a real traceback). See
         # output_writer.RemoteAPIError. (Selenium has no credentialed
         # --cdp-endpoint path to fail this way -- see _cdp_host_port, which

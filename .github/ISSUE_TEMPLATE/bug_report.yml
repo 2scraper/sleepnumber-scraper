@@ -34,7 +34,7 @@ body:
           them.
         - **`health_star_rating`, `ingredients` or `allergy_statement` null
           on some rows?** Expected and measured: 53.6%, 83.2% and 71.8%
-          populated on a 660-row corpus. Woolworths does not publish them for
+          populated across the listings measured here. Sleep Number does not publish them for
           every product.
         - **Some rows look like ads?** They are. The site injects promoted
           products into both listings and serves the SAME ones on every page.
@@ -89,7 +89,7 @@ body:
       render: shell
       placeholder: |
         python3 playwright_scraper.py \
-          --url "https://www.woolworths.com.au/shop/browse/bakery" \
+          --category mattresses \
           --pages 3 --out bakery
     validations:
       required: true

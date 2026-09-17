@@ -1,51 +1,61 @@
 #!/usr/bin/env bash
-# waf_probe.sh — measure how often transfermarkt.com answers with an AWS WAF
-# captcha instead of the page, FROM WHEREVER YOU RUN IT.
+# access_probe.sh — measure whether www.sleepnumber.com will serve THIS exit.
 #
-# Why this ships in the repo rather than living in a notebook: the README and
-# .env.example both quote a figure (8 of 10 requests challenged from a bare
-# datacentre address, 2026-09-16), and a number describing a living thing has
-# to arrive with the command that reproduces it or not be written down at
-# all. That figure is a property of an address on a day, not of the site —
-# from a proxied exit the same day, the real page came back every time.
+# Why this ships in the repo rather than living in a notebook: the README's
+# central claim is a measurement — "every URL answers an identical 919-byte
+# CloudFront 403 from a datacentre address, and 200 from a residential one" —
+# and a number describing a living thing has to arrive with the command that
+# reproduces it or not be written down at all (CLAUDE.md §13).
 #
-#   ./tools/waf_probe.sh                 # 10 requests to market-values
+# It is also the first thing to run when the scraper suddenly returns exit 3:
+# the question is almost always "is this address still being served", and
+# that is one request rather than a debugging session.
+#
+#   ./tools/waf_probe.sh                 # 10 requests to a category
 #   ./tools/waf_probe.sh 20              # 20 requests
-#   ./tools/waf_probe.sh 10 transfers    # a different mode
-#   ./tools/waf_probe.sh 10 market-values --direct   # ignore any proxy
+#   ./tools/waf_probe.sh 10 product      # a different page kind
+#   ./tools/waf_probe.sh 10 listing --direct   # ignore any proxy
 #
-# Modes: market-values | club-squad | transfers | player
+# Page kinds: listing | collection | product | robots
 #
 # THE EXIT IT MEASURES
 # --------------------
-# By default this goes through TRANSFERMARKT_PROXY when .env sets one,
-# because "is this address challenged" is a question about an EXIT, and
-# measuring the machine you happen to be sitting at answers it for one exit
-# only. With no proxy configured, or with --direct, it measures this machine.
+# By default this goes through SLEEPNUMBER_PROXY when .env sets one, because
+# "is this address served" is a question about an EXIT, and measuring the
+# machine you happen to be sitting at answers it for one exit only. With no
+# proxy configured, or with --direct, it measures this machine.
 #
 # The proxy is resolved by env_config.py, the same loader every engine uses,
-# so precedence is the documented one (a real environment variable beats
-# .env) and only one place decides it. It reaches curl through
-# `https_proxy`/`http_proxy` in the ENVIRONMENT -- never a command-line flag,
-# because `ps` reads argv. Only the masked host and port are ever printed.
+# so precedence is the documented one and only one place decides it. It
+# reaches curl through `https_proxy`/`http_proxy` in the ENVIRONMENT — never
+# a command-line flag, because `ps` reads argv. Only the masked host and port
+# are ever printed.
 #
-# Reading the output: a page the site actually served answers from
-# `server: nginx`, its own origin. A refusal answers from `server: CloudFront`
-# with `x-amzn-waf-action: captcha` — CloudFront generated it at the edge and
-# the request never reached Transfermarkt at all.
+# READING THE OUTPUT
+# ------------------
+# A page Sleep Number actually served answers `server: Fly/…` with
+# `x-cache: Miss from cloudfront` and is a few hundred KB. A refusal answers
+# `server: CloudFront` with `x-cache: Error from cloudfront` and is 919
+# bytes: CloudFront generated it at the edge and the request never reached
+# Sleep Number at all.
+#
+# There is no captcha either way. The refusal carries no `x-amzn-waf-action`
+# header and no widget, so no solver can help — what is needed is a
+# different exit. If `x-amzn-waf-action: captcha` ever DOES appear, that is a
+# different and solvable situation, and worth reporting as a change.
 
 set -u
 
 N="${1:-10}"
-MODE="${2:-market-values}"
+MODE="${2:-listing}"
 DIRECT="${3:-}"
 
 case "$MODE" in
-  market-values) URL="https://www.transfermarkt.com/spieler-statistik/wertvollstespieler/marktwertetop" ;;
-  club-squad)    URL="https://www.transfermarkt.com/x/startseite/verein/281" ;;
-  transfers)     URL="https://www.transfermarkt.com/statistik/neuestetransfers" ;;
-  player)        URL="https://www.transfermarkt.com/x/profil/spieler/418560" ;;
-  *) echo "unknown mode: $MODE (expected market-values|club-squad|transfers|player)"; exit 2 ;;
+  listing)    URL="https://www.sleepnumber.com/categories/mattresses" ;;
+  collection) URL="https://www.sleepnumber.com/collections/mattresses-climate-collection" ;;
+  product)    URL="https://www.sleepnumber.com/products/cm-mattress" ;;
+  robots)     URL="https://www.sleepnumber.com/robots.txt" ;;
+  *) echo "unknown page kind: $MODE (expected listing|collection|product|robots)"; exit 2 ;;
 esac
 
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -64,13 +74,13 @@ import env_config
 import proxy_pool
 
 env_config.load_env()
-url = env_config.env_value("TRANSFERMARKT_PROXY")
+url = env_config.env_value("SLEEPNUMBER_PROXY")
 if url:
     print("PROXY_LABEL=%s" % shlex.quote(proxy_pool.mask(url)))
     for name in ("https_proxy", "http_proxy", "HTTPS_PROXY", "HTTP_PROXY"):
         print("export %s=%s" % (name, shlex.quote(url)))
 else:
-    print("PROXY_LABEL=%s" % shlex.quote("direct (no TRANSFERMARKT_PROXY in .env)"))
+    print("PROXY_LABEL=%s" % shlex.quote("direct (no SLEEPNUMBER_PROXY in .env)"))
 ENVPY
 )"
 fi

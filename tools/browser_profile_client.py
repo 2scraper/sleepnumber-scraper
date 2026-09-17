@@ -67,7 +67,7 @@ import env_config  # noqa: E402
 BASE = "https://api.2captcha.com"
 ENV = Path(__file__).resolve().parent.parent / ".env"
 POOL = Path(__file__).resolve().parent.parent / "proxylist.txt"
-VAR = "TRANSFERMARKT_CDP_ENDPOINT"
+VAR = "SLEEPNUMBER_CDP_ENDPOINT"
 TIMEOUT = 30
 
 _SECRET_RE = re.compile(r"(?i)(key|token|password)=([^&\s\"']+)")

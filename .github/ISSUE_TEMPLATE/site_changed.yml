@@ -1,5 +1,5 @@
 name: Site changed
-description: Woolworths changed something and the parser no longer matches.
+description: Sleep Number changed something and the parser no longer matches.
 title: "[site] "
 labels: ["site-change"]
 body:
@@ -8,7 +8,7 @@ body:
       value: |
         Use this when the scraper used to work on a URL and now returns fewer
         rows, empty columns, or nothing at all — the usual cause is that
-        something on woolworths.com.au moved.
+        something on www.sleepnumber.com moved.
 
         **What this scraper depends on**, roughly in order of how likely each
         is to break:
@@ -42,7 +42,7 @@ body:
     id: url
     attributes:
       label: The URL
-      placeholder: "https://www.woolworths.com.au/shop/browse/bakery (mode: category, headful bundled Chromium, exit: AU residential)"
+      placeholder: "https://www.sleepnumber.com/categories/mattresses (mode: listing, headless bundled Chromium, exit: US residential)"
     validations:
       required: true
 

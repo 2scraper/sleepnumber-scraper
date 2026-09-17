@@ -19,7 +19,7 @@
 # are in, including the two where the answer is "inconclusive, and here is
 # why".
 #
-# Needs: .env with TWOCAPTCHA_KEY and TRANSFERMARKT_CDP_ENDPOINT, and
+# Needs: .env with TWOCAPTCHA_KEY and SLEEPNUMBER_CDP_ENDPOINT, and
 # playwright installed. Prints no secrets.
 #
 #   bash tools/verify_browser_api.sh
@@ -54,7 +54,7 @@ echo
 # ---------------------------------------------------------------- config
 if [ ! -f .env ]; then
   echo "!! no .env next to the scripts. Copy .env.example to .env and put"
-  echo "   TWOCAPTCHA_KEY and TRANSFERMARKT_CDP_ENDPOINT in it."
+  echo "   TWOCAPTCHA_KEY and SLEEPNUMBER_CDP_ENDPOINT in it."
   exit 2
 fi
 echo "--- what the loader picks up (no secrets printed) ---"
@@ -93,7 +93,7 @@ echo
 
 # ---------------------------------------------------------------- 3. test
 if [ "$have_cdp" != "yes" ]; then
-  echo "=== 3. TEST — SKIPPED: no TRANSFERMARKT_CDP_ENDPOINT in .env ==="
+  echo "=== 3. TEST — SKIPPED: no SLEEPNUMBER_CDP_ENDPOINT in .env ==="
   echo
   echo "VERDICT: cannot answer the question without the Browser API leg."
   exit 0

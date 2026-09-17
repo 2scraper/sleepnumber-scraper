@@ -1,70 +1,42 @@
 """
 output_writer.py
 -----------------
-Shared row models + JSON/CSV writers used by all three scrapers.
+Shared row model + JSON/CSV writers, the run-metadata sidecar, and the
+status/exit-code mapping used by all four entry points.
 
 Two modes, one row shape
 ------------------------
-    --mode search     /shop/search/products?searchTerm={term}
-    --mode category   /shop/browse/{slug}[/{child}[/{grandchild}]]
+    --mode listing   /categories/{slug} or /collections/{slug}
+    --mode product   /products/{slug}
 
-Both yield the same class, because they are two ways of SELECTING the same
-leaf: a Woolworths product. Search ranks the catalogue by a term, a category
-browses a node of it, and the site answers both from the same internal API
-with the same 115-field product object. `/shop/browse/specials` is a
-category like any other — its node id is the literal `specialsgroup` — so it
-needs no mode of its own.
+Both yield the same class, and that is a measured fact rather than a
+convenience: in Sleep Number's own loader data a listing's
+`category.products[i]` and a detail page's `product` are THE SAME OBJECT
+SHAPE. One reader serves both routes, so the two cannot drift apart.
 
-Where the columns below come from
----------------------------------
-Woolworths server-renders NO product data. Measured on six captures taken
-2026-09-16: zero `application/ld+json` product blocks on search, category and
-specials pages alike (a category page carries exactly one JSON-LD block and
-it is a `BreadcrumbList`), and zero `/shop/productdetails/` links anywhere in
-the served markup. The catalogue arrives afterwards, as JSON, over the site's
-own API:
+Where the columns come from
+---------------------------
+Sleep Number server-renders no product MARKUP — a category page carries zero
+product anchors and zero `"sku"` strings as elements, because the grid is
+painted client-side. What it does carry, on every page kind, is the React
+Router hydration payload: a turbo-stream document holding the complete
+server-side loader data, inlined before any script runs.
 
-    POST /apis/ui/Search/products     search
-    POST /apis/ui/browse/category     a category node, by opaque id
-    GET  /apis/ui/products/{codes}    the same object, fetched by stockcode
+So every column here is read out of that payload, and `product_parser.py`
+has the detail of how. JSON-LD is present on some pages and read as a SECOND
+OPINION, recorded per row in `price_source`, never as the primary source —
+it publishes an `ItemList` on some listings and none at all on others.
 
-All three return the SAME product shape — 115 fields — so one parser reads
-all three and `data_source` says which answered. `product_parser.py` has the
-detail.
+A ROW IS A SIZE VARIANT
+-----------------------
+`QCM10` is one model in Queen and `KCM10` the same model in King, at
+genuinely different prices — ComfortMode spans $989.10 to $2,069.10 across
+seven sizes. `sku` is the variant id, so the family's dedupe-and-diff-on-sku
+contract works unchanged and price moves are reported per size.
 
-Every column here is measured, and the measurement is why it is here
---------------------------------------------------------------------
-Taken on a 660-row corpus (589 distinct stockcodes) drawn 2026-09-16 from
-five search terms and three category nodes. The numbers are a snapshot of one
-run rather than a property of the site, which is why they name their date
-(CLAUDE.md §13).
-
-Five columns the previous generation of this repo advertised are NOT here,
-and each absence is a measurement rather than an oversight (§9: a column null
-on every row of every run should not exist, and removing it needs the number
-written down so someone can put it back with a better one):
-
-    rating          The API ships a `Rating` object on every product and it
-    rating_count    is EMPTY on every product. RatingCount, ReviewCount,
-    review_count    RatingSum and Average were 0 on all 660 listing rows and
-                    on 10 rows fetched from the by-stockcode detail endpoint
-                    — 670 rows, zero non-zero. The object's presence is what
-                    makes this worth writing down: a parser that reads it
-                    fills three columns with 0 and reports 100% coverage.
-
-    country_of_origin
-                    `AdditionalAttributes.countryoforigin` exists on all 660
-                    rows and is null on all 660.
-
-    instore_price   Not null — DUPLICATE. `InstorePrice` equalled `Price` on
-                    656 of 656 rows carrying both, to the cent. The in-store
-                    and online SPECIAL FLAGS did disagree, on 13 of 660 rows,
-                    which is a real difference with no price behind it; if a
-                    later capture shows the prices themselves diverging this
-                    is the column to add back.
-
-And one column is here that a naive port would have got backwards — see
-`original_price`.
+Every figure quoted in this file was measured on 2026-09-17 through a US
+residential exit, and names its date because it is a snapshot of one run
+rather than a property of the site (CLAUDE.md §13).
 """
 import csv
 import json
