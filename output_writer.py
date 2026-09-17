@@ -73,181 +73,131 @@ from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Type
 
 
-# The host a row came from. Woolworths Online is one site on one host, so
-# unlike the sibling repos this genuinely does not vary — but the column
-# stays, in the family's position and under the family's name, so a consumer
-# reading six of these repos reads the same first five columns (§9).
-SOURCE_DEFAULT = "woolworths.com.au"
-
-# Woolworths Online prices in Australian dollars, and the API NEVER SAYS SO:
-# there is no `currency`, `Currency`, `priceCurrency` or `AUD` token anywhere
-# in a product object (counted across 50 full objects, 0 occurrences of each).
-#
-# So this is not read from the payload and it is not guessed from a `$` in
-# the DOM either — §4's ladder rates a bare symbol a guess, and it would be
-# one, since `$` alone is equally USD, NZD or SGD. It is derived from the
-# HOST: woolworths.com.au is the Australian supermarket and sells in AUD.
-# That is a fact about which site answered, which is why it lives beside
-# `HOSTS` in product_parser.py and is refused for any host not in that table.
-CURRENCY_BY_HOST = {"woolworths.com.au": "AUD"}
-
+# The host a row came from. Sleep Number is one US storefront on one host,
+# so unlike some siblings this genuinely does not vary — but the column stays,
+# in the family's position and under the family's name, so a consumer reading
+# several of these repos reads the same first five columns (§9).
+SOURCE_DEFAULT = "sleepnumber.com"
 
 @dataclass
 class Product:
+    """One SIZE VARIANT of one Sleep Number product.
+
+    A row is a variant, not a model: `QCM10` is the ComfortMode™ Mattress in
+    Queen and `KCM10` is the same model in King, and they carry genuinely
+    different prices (measured: ComfortMode spans 989.10 to 2069.10 across
+    seven sizes). `sku` is the variant id, so the family's dedupe-on-sku
+    contract works unchanged. See product_parser.py's docstring for the
+    argument in full.
+    """
+
     # --- the family prefix, byte-identical and in order across the family ---
     source: str = SOURCE_DEFAULT
     scraped_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    # Rebuilt, not read. There is no product link in the served markup to
-    # copy — zero `/shop/productdetails/` anchors on any capture — so this is
-    # assembled from `Stockcode` and `UrlFriendlyName`, which is the address
-    # the site's own router builds. `product_parser.product_url()` owns the
-    # shape and `smoke_test.py` pins it against a live capture.
+    # `/collections/{collection}/{SKU}` where the collection is known, which
+    # names the exact variant, else the model's own `canonical_url`. Both
+    # answer HTTP 200 (measured). NEVER copied verbatim out of the site's
+    # structured data: that publishes `http://sndotcom.fly.dev/...`, the Fly
+    # application host, on every ItemList entry — see product_parser's
+    # `_public_url`.
     url: str = ""
-    # `Stockcode`, as a string. Woolworths' own product number, stable across
-    # a rename (the slug in the URL is not), and the join key for
-    # `diff_runs.py`. 100% populated on all 660 rows.
+    # The variant sku — `QCM10`, `K1C360`, `T8`. Sleep Number's own id,
+    # unique per size, and the join key for diff_runs.py. A variant with no
+    # sku is dropped rather than emitted, because a row that cannot be
+    # identified cannot be diffed and is worse than a missing one.
     sku: Optional[str] = None
-    # `DisplayName` — the name as the shelf shows it, including the pack size
-    # ("Dairy Farmers Full Cream Milk 2L"). NOT `Name`, which drops the size
-    # and duplicates the variety ("Dairy Farmers Full Cream Milk Full Cream
-    # Milk"). Both are 100% populated, which is why the wrong one is easy to
-    # ship: `title` would look complete and read worse on every row.
+    # The model name as the site prints it, e.g. "ComfortMode™ Mattress".
+    # Shared by every size of that model — `size` is what separates them.
     title: Optional[str] = None
 
     # --- the product -----------------------------------------------------
-    brand: Optional[str] = None          # 93.9%
-    # `Description`, HTML stripped — it carries `<br>` on a real fraction of
-    # rows.
-    description: Optional[str] = None    # 100%
-    # `Variety` — the flavour/variant word ("Full Cream Milk"). 79.1%.
-    variety: Optional[str] = None
-    barcode: Optional[str] = None        # 100%
+    # A constant, not a read field: Sleep Number sells only its own brand,
+    # and the site's JSON-LD states `brand.name = "Sleep Number"` on every
+    # entry measured. Kept as a column because the family has one and a
+    # consumer merging repos expects it; see product_parser.BRAND for why it
+    # is not read per row.
+    brand: Optional[str] = None
 
     # --- price -----------------------------------------------------------
-    # `Price`. 99.4% — the 0.6% that is null are products the API returns
-    # with no price at all, and they are also `IsAvailable: false`.
+    # `variant.sale.cents / 100`, or `variant.regular.cents / 100` when
+    # nothing is on sale. INTEGER CENTS at source, so there is no price
+    # grammar to get wrong here and this repo ships none — no thousands
+    # separator, no decimal comma, no dash standing in for the cents.
     price: Optional[float] = None
-    # Always "AUD" on this host, and never read from the payload. See
-    # CURRENCY_BY_HOST above.
+    # `currency_iso`, which is a stated fact rather than a symbol to guess
+    # from. Null if the payload omits it; never a defaulted "USD".
     currency: Optional[str] = None
-    # `WasPrice`, AND ONLY WHEN IT IS ACTUALLY A WAS-PRICE.
-    #
-    # This is the trap this repo would most easily have shipped. `WasPrice`
-    # is populated on 100% of rows and EQUALS `Price` on 537 of 660 of them —
-    # 81%. Copying it straight across gives an `original_price` identical to
-    # the price and a computed discount of 0% on four rows in five, on
-    # products that are not discounted at all. Only 119 rows carry a
-    # `WasPrice` greater than `Price`, and those are the real ones.
-    #
-    # So: null unless `WasPrice > Price`. `discount_pct` is then computed
-    # from the two rather than read, and is null rather than 0 where there is
-    # no discount — §4's rule, and `smoke_test.py` asserts no row has an
-    # `original_price` at or below its `price`.
+    # `variant.regular.cents / 100`, AND ONLY WHEN THE ITEM IS ACTUALLY ON
+    # SALE. When `sale` is absent the regular price IS the price, so it moves
+    # into `price` and this stays null rather than duplicating it — the
+    # mistake that would otherwise give every undiscounted row a 0% discount.
     original_price: Optional[float] = None
-    # `SavingsAmount`. Equalled `WasPrice - Price` on every one of the 660
-    # rows, so it is a cross-check rather than a second source; a row where
-    # the two disagree is worth knowing about and the parser warns.
-    savings_amount: Optional[float] = None
-    # Computed from `original_price` and `price`, never read from a badge.
-    # Null when there is no was-price, rather than 0.
+    # Computed from the two, never read from the badge. Null — not 0 and
+    # never negative — when the figures are not what they seem.
     discount_pct: Optional[float] = None
-    # WHICH view built the price on this row (§8: never present a guess as a
-    # fact). `diff_runs.py` reports a price difference that comes with a
-    # `price_source` difference as `source_changed` rather than as a change.
+    # WHICH view built the price (§8: never present a guess as a fact).
     #
-    #   api          the site's own JSON, which is the normal case
-    #   api+dom      the JSON, with the rendered tile agreeing
-    #   dom          the rendered tile only — the fallback path
+    #   payload                   the hydration payload only. The normal case
+    #                             on a listing that publishes no ItemList.
+    #   payload+jsonld            the payload AND the page's JSON-LD agree.
+    #                             Measured 7 of 7 on the king capture.
+    #   payload_jsonld_disagree   the two views disagree about this sku. The
+    #                             payload is kept and the parser warns; an
+    #                             uncorrected row beats an overwritten one.
+    #   url-fallback              the payload was unreadable and the row came
+    #                             from the URL pattern. NO PRICE on these.
+    #
+    # diff_runs.py reports a price difference that comes with a price_source
+    # difference as `source_changed`, not `changed`.
     price_source: Optional[str] = None
 
-    # --- unit pricing, which is why anyone scrapes a supermarket ----------
-    # `CupPrice` / `CupMeasure` / `CupString` — the shelf's unit price
-    # ("$2.35 / 1L"). 99.4%, and the only way to compare a 2L bottle against
-    # a 3L one.
-    cup_price: Optional[float] = None
-    cup_measure: Optional[str] = None
-    cup_string: Optional[str] = None
-    package_size: Optional[str] = None   # 100%
-    # `Unit` — 'Each' on 656 of 660 rows and 'KG' on 4. A near-constant
-    # column, kept because the 4 are the ones priced by weight.
-    unit: Optional[str] = None
+    # --- rating -----------------------------------------------------------
+    # `review_stats.average_overall_rating`, and null WITH `review_count`
+    # when nothing has been reviewed. The site reports 0 for both on an
+    # unreviewed product, and a 0 written through drags every average a
+    # consumer computes — the trap bbb-scraper hit with ungraded businesses.
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
 
-    # --- promotions -------------------------------------------------------
-    is_on_special: Optional[bool] = None   # 17.6% true
-    is_half_price: Optional[bool] = None   # 6.5% true
-    # A PROMOTED AD, not an organic result — `IsSponsoredAd`, 17.0% of rows.
-    #
-    # This column is load-bearing rather than informational. Woolworths
-    # injects promoted products into both listings, and the SAME ads come
-    # back on every page: pages 1 and 3 of one search returned an identical
-    # set of 8, and of 8 stockcodes appearing twice across three pages all 8
-    # were sponsored and 0 were organic. Past the end of a category the API
-    # keeps answering 200 with `Success: true` and NOTHING BUT ads — page 17
-    # of a 16-page category returned 1 row, page 18 returned 8, page 99
-    # returned 8, every one of them sponsored.
-    #
-    # So a consumer doing price monitoring filters on this, and the engines
-    # count ORGANIC rows to decide the listing has ended. See
-    # `page_flow.organic_count`.
-    is_sponsored: Optional[bool] = None
-    # `AdStatus` — 'Promoted' where the row is an ad, null otherwise.
-    ad_status: Optional[str] = None
-    # `OfferId`, where the promotion has one. 33.6%.
-    offer_id: Optional[str] = None
-
-    # --- availability ------------------------------------------------------
-    is_available: Optional[bool] = None
-    is_in_stock: Optional[bool] = None
-    is_purchasable: Optional[bool] = None
-    # `SupplyLimit` — the per-order cap. 100% populated.
-    supply_limit: Optional[int] = None
-
-    # --- where it sits in the catalogue -------------------------------------
-    # From `AdditionalAttributes`, which carries SAP's merchandising
-    # hierarchy. 99.5% on all three.
-    department: Optional[str] = None
+    in_stock: Optional[bool] = None
+    image_url: Optional[str] = None
     category: Optional[str] = None
-    subcategory: Optional[str] = None
 
-    # --- what is in it ------------------------------------------------------
-    # All five live in `AdditionalAttributes` rather than at the top level,
-    # which is why the previous generation of this repo promised them and
-    # could not fill them.
-    health_star_rating: Optional[float] = None   # 53.6%
-    dietary_claims: Optional[str] = None         # 74.4%
-    allergy_statement: Optional[str] = None      # 71.8%
-    ingredients: Optional[str] = None            # 83.2%
-    storage_instructions: Optional[str] = None   # 65.3%
-
-    image_url: Optional[str] = None              # 100%
-
-    # --- provenance ---------------------------------------------------------
-    # WHICH of the site's answers built this row.
-    #
-    #   api-search     POST /apis/ui/Search/products
-    #   api-category   POST /apis/ui/browse/category
-    #   api-products   GET  /apis/ui/products/{codes}
-    #   dom            the rendered tile, the fallback path
-    data_source: Optional[str] = None
-    # The fetch this row came from, and its position within it. Unique as a
-    # PAIR across a run — `position` restarts at 1 on every page, so the
-    # column is worthless without `page` beside it, and `smoke_test.py`
-    # asserts the pair is unique (§18).
-    #
-    # Note that `sku` is NOT unique across a multi-page run before deduping,
-    # and that is the ads above rather than a bug.
+    # --- Sleep Number specific, appended so the family prefix stays stable --
+    # "Queen", "King", "Split King"… — from `variant.details.Size`. This is
+    # the column that makes a variant row mean something, and the reason a
+    # row is a variant at all.
+    size: Optional[str] = None
+    # Workarea's internal product id (`AF1E5D37DF`) and url slug. The id is
+    # stable across a rename; the slug is what the canonical URL uses.
+    product_id: Optional[str] = None
+    product_slug: Optional[str] = None
+    # Which collection the model belongs to, e.g. `mattresses-climate-collection`.
+    collection_slug: Optional[str] = None
+    # `mattress`, `base`, `pillow`, `other`… — the site's own `type`.
+    product_type: Optional[str] = None
+    # The site's promotional badge, e.g. "$1,312.50 OFF". Kept verbatim as
+    # TEXT rather than parsed into a number: `discount_pct` is computed from
+    # the two prices and is the figure to trust, and a badge is marketing
+    # copy whose format is the site's to change.
+    promo_badge: Optional[str] = None
+    # Which listing page this row came from (1-based) and its position within
+    # that page. Without `page`, `position` is ambiguous — it restarts at 1 on
+    # every page. smoke_test.py asserts the pair is unique across a run.
     page: Optional[int] = None
     position: Optional[int] = None
 
 
-# Both modes yield the same class: a Woolworths row is a product whichever
-# way it was selected, and the API answers both with the same object.
-ROW_CLASS_BY_MODE = {"search": Product, "category": Product}
+# Both modes yield the same class, and that is a measured fact rather than a
+# convenience: a listing's `category.products[i]` and a detail page's
+# `product` are THE SAME OBJECT SHAPE in this site's own loader data, so one
+# reader serves both and they cannot drift apart.
+ROW_CLASS_BY_MODE = {"listing": Product, "product": Product}
 
-# Modes whose rows are one-per-sku AFTER the dedupe in `save()`, and
-# therefore safe to hand to diff_runs.py. Both qualify — see `is_sponsored`
-# for why the dedupe is not optional here.
-UNIQUE_BY_SKU_MODES = ("search", "category")
+# Modes whose rows are one-per-sku after the dedupe in `save()`, and
+# therefore safe to hand to diff_runs.py. Both qualify: a variant sku is
+# unique within a run whichever route produced it.
+UNIQUE_BY_SKU_MODES = ("listing", "product")
 
 
 def dedupe_by_key(rows: Sequence[Any], seen: Set[str], key: str = "sku") -> List[Any]:
@@ -360,6 +310,25 @@ EXIT_BLOCKED = 3
 # two definitions of the same code is exactly how a family's exit contract
 # drifts.
 EXIT_API_ERROR = 5
+# The same code under the name the engines and the rest of this family use.
+# Kept as an alias rather than a rename so a consumer reading two repos in
+# this family finds whichever spelling it learned first.
+EXIT_REMOTE_API_ERROR = EXIT_API_ERROR
+
+
+class RemoteAPIError(RuntimeError):
+    """A 2Captcha product call failed on its OWN terms — not the site
+    blocking a page.
+
+    Raised by fingerprint_client.get_fingerprint and by each engine's
+    --cdp-endpoint connect path; caught once at each engine's entry point and
+    mapped to EXIT_REMOTE_API_ERROR, so the three engines cannot drift on
+    which of 1 (crash) / 3 (blocked) / 5 (remote API error) a given failure
+    gets. Without it both paths raise a bare RuntimeError that nothing
+    catches, so either failure reaches the interpreter as an unhandled
+    exception and exits 1 — a raw traceback with no run-metadata sidecar —
+    whichever one it actually was.
+    """
 
 EXIT_PARTIAL = 6
 
@@ -385,7 +354,7 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
 def run_meta(status: str, stop_reason: str, pages_requested: int,
              pages_completed: int, start_url: str, final_url: str,
              products: int, pages_failed: Optional[List[int]] = None,
-             mode: str = "search", source: str = SOURCE_DEFAULT,
+             mode: str = "listing", source: str = SOURCE_DEFAULT,
              extra: Optional[dict] = None) -> dict:
     """Build the metadata dict for a finished run.
 
@@ -521,7 +490,7 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
                pages_requested: int, pages_completed: int,
                start_url: str, final_url: str,
                pages_failed: Optional[List[int]] = None,
-               mode: str = "search", source: str = SOURCE_DEFAULT,
+               mode: str = "listing", source: str = SOURCE_DEFAULT,
                extra: Optional[dict] = None) -> int:
     """Write output + the run-metadata sidecar; return the exit code.
 
