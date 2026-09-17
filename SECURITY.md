@@ -11,7 +11,7 @@ public from the moment you press submit.
 
 If private reporting is unavailable to you, mail support@2captcha.com. That is
 2Captcha's general support address rather than a security-only one, so put
-**"woolworths-scraper security"** in the subject — otherwise it lands in a queue
+**"sleepnumber-scraper security"** in the subject — otherwise it lands in a queue
 about API keys and billing and takes longer to reach the right person.
 
 **What helps most:** the version you are on (commit hash), the exact command,
@@ -53,12 +53,12 @@ In scope:
 
 Not because these do not matter, but because they belong somewhere else:
 
-- **Bypassing Woolworths' bot protection.** This scraper drives an ordinary
+- **Bypassing Sleep Number's bot protection.** This scraper drives an ordinary
   browser and waits out challenges the way a browser does. Anything about how
   Cloudflare behaves is not a vulnerability in this repository — and note this
   repo attempts no captcha solve at all on this site, because the challenge it
   serves has nothing to solve.
-- **The scraper stopped working.** Woolworths changing its API is expected —
+- **The scraper stopped working.** Sleep Number changing its front end is expected —
   file it as a normal issue, there is a template for exactly that.
 - **Anything about 2Captcha's services** — the solver API, the Scraping Browser
   API, proxies, fingerprints, billing, quotas. This repository is only a client

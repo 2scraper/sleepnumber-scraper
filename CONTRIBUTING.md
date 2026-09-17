@@ -40,7 +40,7 @@ not the check caught it.
 
 ## Reporting a site change
 
-Woolworths changing something is the normal way this stops working, and it
+Sleep Number changing something is the normal way this stops working, and it
 has its own issue template. The detail that saves the most time is WHICH part
 broke, because they fail very differently.
 
@@ -93,7 +93,7 @@ misses an HTTP client.
 
 **Before you add a marker, count it on a page you know is good.** This repo
 got that wrong twice in one day. `akamai` occurs once on every page
-Woolworths serves (its own performance script) and zero times on the denial
+Sleep Number serves (its base template's reCAPTCHA loader) and zero times on the refusal
 page — exactly inverted. `couldn't find any` occurs four times on every page,
 good or empty, because it ships in the JS bundle as a template; taken as a
 no-results marker it made a 2,205-result search report itself empty.
@@ -122,14 +122,14 @@ Then the rest of the presentation, in the order that matters:
 
 1. `python3 smoke_test.py` green, and the canary dispatched at least once —
    including its WARNING branch, which is what runs when a bare GitHub
-   runner's datacentre address is refused and no `WOOLWORTHS_PROXY` secret is set.
+   runner's datacentre address is refused and no `SLEEPNUMBER_PROXY` secret is set.
    This canary needs no secret to do real work: eight of fourteen fetches
    were served in full with no key and no proxy, from a DATACENTRE address
    at that. What it has NOT been measured doing is getting past
    Cloudflare from a shared datacentre address, and since the challenge here
    tracks the address's recent request rate, a runner is the worst case for
    it. That is exactly why a block there is a warning rather than a failure —
-   until you set `WOOLWORTHS_PROXY`, after which it is a failure, because then it
+   until you set `SLEEPNUMBER_PROXY`, after which it is a failure, because then it
    means something.
 2. The repo description, homepage and topics set (see the family notes on
    what those should say).
@@ -148,7 +148,7 @@ Ten properties in this repo exist because they were once absent, or because
 they cost a sibling repo real time. Tests pin all ten, so a PR that breaks one
 will fail rather than silently regress:
 
-- **`sku` is `Stockcode`, as a string.** Woolworths' own product number,
+- **`sku` is the size-variant id, as a string.** Sleep Number's own id — `QCM10`, `K1C360` — unique per size, which is why a row here is a variant,
   stable across a rename — the slug in the URL is not — and the join key
   `diff_runs.py` uses. Note it is NOT unique across a multi-page run before
   deduping, because the same promoted ads are served on every page;
@@ -177,7 +177,7 @@ will fail rather than silently regress:
   sponsored. A loop testing "were there rows" never terminates.
 
 - **A marker that matches every good page is not a marker.** Counted on a
-  real served capture: `akamai` once on every page Woolworths serves and zero
+  real served capture: `recaptcha` and `captcha` once on every page Sleep Number serves and zero
   times on its denial page — exactly inverted — and `couldn't find any` four
   times on every page, good or empty, because it ships in the JS bundle as a
   template. Both are pinned as NON-markers. Count any new marker on a page
@@ -232,7 +232,7 @@ will fail rather than silently regress:
 
 Most do not — the suite covers the parser, the writers, the captcha classifier
 and the CLI contract against inline fixtures. If yours genuinely needs
-woolworths.com.au, say in the PR what you ran, which URL and mode, from
+www.sleepnumber.com, say in the PR what you ran, which URL and mode, from
 which exit, and what you got — including the price and image coverage
 percentages the run prints, and the scroll trace from the sidecar. Note that
 a run from a datacentre address gets NO RESPONSE AT ALL, so "it returned
@@ -251,7 +251,7 @@ account is not a result worth having.
 
 ## Scope
 
-This repo scrapes **public pages** on Woolworths Online: category listings, search
+This repo scrapes **public pages** on Sleep Number: category listings, collection
 listings and product pages, exactly as an anonymous visitor is served them.
 Out of scope: anything behind a login, anything that submits a form, and
 anything that defeats a protection rather than passing it the way an ordinary

@@ -8,7 +8,7 @@ Check `--dump-html PATH` first — it writes the exact bytes the parser was
 given, whether the run succeeded or not, so you can see what actually
 arrived instead of guessing.
 
-Whether transfermarkt.com treats a datacentre or VPN address differently
+Whether www.sleepnumber.com treats a datacentre or VPN address differently
 from a residential one is **genuinely unmeasured for v0.1** — see README's
 "Known limitations". This repo's own build environment could not complete a
 live browser connection to the site at all to check (the failure traced back
