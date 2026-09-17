@@ -74,6 +74,7 @@ from captcha_solver import (detect_recaptcha_v3, detect_recaptcha_in_page,
                             detect_aws_waf, AWS_WAF_COOKIE,
                             INJECT_TOKEN_JS)
 from product_parser import (parse_products, detect_page_state, page_url,
+                            detect_bot_challenge,
                             is_supported_url, normalise_url, HOSTS,
                             category_url, product_url, CATEGORY_URL,
                             CANONICAL_HOST)

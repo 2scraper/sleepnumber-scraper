@@ -328,3 +328,24 @@ def listing_arithmetic(page1_html: str) -> Dict[str, Any]:
         "pages_available": pages_available,
         "page_param_honoured": False,   # measured; see CONCURRENCY_CAPABLE_MODES
     }
+
+
+# How much smaller than page 1 a later page may be before it is worth
+# mentioning. Informational only: it NEVER changes an exit code, because a
+# short last page is the normal shape of a listing that has run out, and a
+# threshold is a weaker signal than a marker (§17's classification-order
+# lesson, applied to a warning rather than to a state).
+THIN_PAGE_RATIO = 0.4
+
+
+def is_thin_page(row_count: int, first_page_count: int) -> bool:
+    """Is this page suspiciously emptier than page 1?
+
+    Worth a log line and nothing more. On this site it is close to
+    unreachable — every category measured fits on one page — but the
+    machinery for a catalogue that grows should not have a hole in it where
+    the check that notices a partial page would go.
+    """
+    if not first_page_count or row_count >= first_page_count:
+        return False
+    return row_count < first_page_count * THIN_PAGE_RATIO

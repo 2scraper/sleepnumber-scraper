@@ -1,36 +1,24 @@
 #!/usr/bin/env python3
 """
-transfermarkt-scraper — Selenium edition (secondary engine)
-==============================================================
+sleepnumber-scraper — Selenium edition (secondary engine)
+==================================================
 
-The same scrape as playwright_scraper.py, driven through Selenium. It must
-agree with its twin on exit codes, run status, and whether a run crashes or
-spends money — those decisions live in page_flow.py and
-output_writer.finish_run(), so this file is browser plumbing and nothing
-else. See playwright_scraper.py's docstring for what is different about
-Transfermarkt and what was and was not measured about it.
+The same two modes, the same flags and the same exit codes as
+playwright_scraper.py, which is the engine the README recommends. This one
+exists so the family's "three engines must agree" contract is testable
+rather than asserted, and because a reader who already has Selenium
+installed should not have to add another browser stack to try this.
 
-Two limits of this engine, stated here rather than left to be discovered.
-Neither is a bug in this code and neither can be fixed from here:
+    --mode listing   a /categories/… or /collections/… page. The default.
+    --mode product   a /products/… detail page.
 
-  * **Selenium cannot use an authenticated remote CDP endpoint.**
-    chromedriver's `debuggerAddress` takes a bare `host:port` with nowhere
-    to put a password. A credentialed --cdp-endpoint is refused with exit 2
-    rather than connected to and silently failing.
-  * **Selenium cannot authenticate a proxy at all.** `--proxy-server=`
-    accepts no credentials. They are stripped and a warning says so.
-
-There is also no --concurrency here: parallel page fetching (--mode
-transfers only) lives in playwright_scraper.py.
-
-Usage
------
-    python selenium_scraper.py --mode market-values --pages 3
-    python selenium_scraper.py --mode club-squad --club-id 281
+Read playwright_scraper.py's docstring for what is actually unusual about
+Sleep Number: the catalogue arrives as a React Router turbo-stream
+hydration payload rather than as markup, `?page=N` is ignored by the
+server, and access is an ADDRESS problem — every URL answers an identical
+CloudFront 403 from a datacentre address and 200 from a residential one.
 
 Requires: pip install -r requirements.txt -r requirements-selenium.txt
-          Selenium 4 fetches a matching chromedriver itself; a local Chrome
-          or Chromium must be installed.
 """
 
 import argparse
@@ -51,13 +39,13 @@ from selenium.webdriver.chrome.options import Options
 from captcha_solver import (detect_aws_waf, detect_recaptcha_v3,
                             detect_recaptcha_in_page, reconcile_detections,
                             solve_recaptcha, AWS_WAF_COOKIE, INJECT_TOKEN_JS)
-from product_parser import (parse_market_values, parse_club_squad,
-                            parse_transfers, parse_player_detail,
-                            detect_bot_challenge, page_url,
-                            site_host, is_supported_host, unsupported_reason,
-                            HOSTS, player_url, club_squad_url,
-                            MARKET_VALUES_URL, TRANSFERS_URL)
-from output_writer import dedupe_by_key, finish_run, RemoteAPIError, EXIT_REMOTE_API_ERROR
+from product_parser import (parse_products, detect_page_state, page_url,
+                            detect_bot_challenge,
+                            is_supported_url, normalise_url, HOSTS,
+                            category_url, product_url, CATEGORY_URL,
+                            CANONICAL_HOST)
+from output_writer import (dedupe_by_key, finish_run, RemoteAPIError,
+                           EXIT_REMOTE_API_ERROR, SOURCE_DEFAULT)
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
                         ProxyError, split_credentials)
@@ -68,7 +56,7 @@ logger = logging.getLogger("selenium_scraper")
 
 PAGE_LOAD_TIMEOUT = 60
 SCRIPT_TIMEOUT = 30
-PAGINATED_MODES = ("market-values", "transfers")
+PAGINATED_MODES = page_flow.PAGINATED_MODES
 
 _PROXY_ERROR_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED", "ERR_TUNNEL_CONNECTION_FAILED",
@@ -133,14 +121,22 @@ class _Session:
         # Selenium's equivalent of the `domcontentloaded` that
         # playwright_scraper.py and puppeteer_scraper.py both navigate with.
         # The default strategy is "normal", which blocks until the `load`
-        # event, and on this site that event does not arrive: measured
-        # 2026-09-16, www.transfermarkt.com timed out at 60s on every attempt
-        # ("timeout: Timed out receiving message from renderer") while
-        # https://example.com returned in 0.2s through the same driver, and
-        # while both other engines fetched the same page in under two
-        # seconds. A listing page's rows are in the first response here (see
-        # page_flow.py), so waiting for the last tracker pixel buys nothing
-        # and cost this engine every live run it ever attempted.
+        # event — i.e. until the last third-party pixel has settled.
+        #
+        # "eager" is the right choice here for a reason specific to this
+        # site rather than a general preference: the catalogue is in the
+        # FIRST response, inlined as the hydration payload, so everything
+        # this scraper reads exists at DOMContentLoaded and every further
+        # millisecond is spent waiting for analytics. Sleep Number loads a
+        # Cloudinary image CDN, New Relic and a Dynamic Yield tag, none of
+        # which this engine reads a byte of.
+        #
+        # The stronger form of this — a `load` event that never arrives at
+        # all and times the driver out on every attempt — was measured on a
+        # sibling repo (transfermarkt-scraper, 2026-09-16) rather than here,
+        # and is named as that repo's measurement rather than restated as
+        # this one's: this site has not been observed hanging, and a number
+        # inherited is not a number measured.
         options.page_load_strategy = "eager"
         if self.remote:
             options.debugger_address = _cdp_host_port(self.args.cdp_endpoint)
@@ -248,16 +244,15 @@ def _driver(session):
 
 
 def _parse_for_mode(html: str, url: str, args, page_num: int) -> List:
-    if args.mode == "market-values":
-        return parse_market_values(html, url, page_num=page_num)
-    if args.mode == "club-squad":
-        return parse_club_squad(html, url, club_id=args.club_id)
-    if args.mode == "transfers":
-        return parse_transfers(html, url, page_num=page_num)
-    if args.mode == "player":
-        row = parse_player_detail(html, url)
-        return [row] if row is not None else []
-    raise ValueError(f"unknown mode {args.mode!r}")
+    """Both modes, one reader — see playwright_scraper.py's twin of this.
+
+    Kept byte-identical across the three engines on purpose: this is the
+    function that decides what a row IS, and three spellings of it is how
+    two engines come to disagree about the same page.
+    """
+    if args.mode not in page_flow.MODES:
+        raise ValueError(f"unknown mode {args.mode!r}")
+    return parse_products(html, url, page=page_num if args.mode == "listing" else None)
 
 
 def _next_page_href(session) -> Optional[str]:
@@ -469,20 +464,27 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     rows = _parse_for_mode(html, final_url, args, page_num)
     logger.info("Parsed %d row(s) from page %d.", len(rows), page_num)
 
-    if rows and args.mode in ("market-values", "club-squad", "transfers"):
+    if rows:
         priced = sum(1 for r in rows if r.price is not None)
         coverage = priced / len(rows)
         logger.info("Price coverage on page %d: %d/%d (%.0f%%).", page_num,
                     priced, len(rows), 100.0 * coverage)
-        # See page_flow.PRICE_COVERAGE_FLOOR for why transfers is excluded.
-        if (args.mode in ("market-values", "club-squad")
-                and coverage < page_flow.PRICE_COVERAGE_FLOOR):
+        # See page_flow.PRICE_COVERAGE_FLOOR: every variant measured on this
+        # site publishes a price, so a shortfall is a parsing regression.
+        if coverage < page_flow.PRICE_COVERAGE_FLOOR:
             logger.warning("Price coverage on page %d (%.0f%%) is below the "
-                           "%.0f%% floor for --mode %s — check for a "
-                           "parsing regression rather than assuming these "
-                           "players are all free agents.",
+                           "%.0f%% floor — every variant measured on this "
+                           "site publishes a price, so check for a parsing "
+                           "regression rather than assuming these products "
+                           "are unpriced.",
                            page_num, 100.0 * coverage,
-                           100.0 * page_flow.PRICE_COVERAGE_FLOOR, args.mode)
+                           100.0 * page_flow.PRICE_COVERAGE_FLOOR)
+        fallback = sum(1 for r in rows if r.price_source == "url-fallback")
+        if fallback:
+            logger.warning("%d of %d row(s) on page %d came from the URL "
+                           "pattern because the hydration payload could not "
+                           "be decoded — those rows carry no price.",
+                           fallback, len(rows), page_num)
 
     if not rows:
         debug_html = f"{args.out}_page{page_num}_debug.html"
@@ -511,6 +513,10 @@ def scrape(args) -> int:
                        "the remote browser has its own exit.")
         pool = None
     if args.concurrency > 1:
+        # page_flow.CONCURRENCY_CAPABLE_MODES is empty for this site — see
+        # there for the measurement (?page=N returns page one) rather than
+        # repeating the reason in three engines and letting them drift.
+        assert not page_flow.CONCURRENCY_CAPABLE_MODES
         logger.warning("--concurrency is ignored in this engine: parallel "
                        "page fetching (--mode transfers) is implemented in "
                        "playwright_scraper.py. Running sequentially.")
@@ -596,18 +602,21 @@ def scrape(args) -> int:
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, mode=args.mode,
-                      source=site_host(final_url) or "transfermarkt.com",
+                      source=SOURCE_DEFAULT,
                       start_url=args.url, final_url=final_url)
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Transfermarkt scraper (Selenium edition)")
-    p.add_argument("--mode", choices=["market-values", "club-squad", "transfers", "player"],
-                   default="market-values")
-    p.add_argument("--url", default=None)
-    p.add_argument("--club-id", default=None)
-    p.add_argument("--season", default=None)
-    p.add_argument("--player-id", default=None)
+    p.add_argument("--mode", choices=list(page_flow.MODES), default="listing",
+                   help="listing (default) or product. See "
+                        "playwright_scraper.py --help for the full text; the "
+                        "three engines take the same flags by contract.")
+    p.add_argument("--url", default=None,
+                   help="The exact URL to read, replacing --category.")
+    p.add_argument("--category", default=None,
+                   help="A category/collection slug for --mode listing, or a "
+                        "product slug for --mode product.")
     p.add_argument("--pages", type=int, default=1)
     p.add_argument("--delay", type=float, default=2.0)
     p.add_argument("--concurrency", type=int, default=1,
@@ -615,7 +624,9 @@ def parse_args():
     p.add_argument("--retries", type=int, default=3)
     p.add_argument("--retry-delay", type=float, default=2.0)
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
-    p.add_argument("--out", default="transfermarkt_products")
+    p.add_argument("--out", default="sleepnumber_products")
+    p.add_argument("--locale", default="en-US",
+                   help="Browser locale (default en-US: Sleep Number is a US storefront and prices in USD).")
     p.add_argument("--proxy", default=None)
     p.add_argument("--proxy-file", default=None)
     p.add_argument("--proxy-rotate", choices=list(ROTATE_MODES), default="per-run")
@@ -643,23 +654,18 @@ def parse_args():
     env_config.apply(args)
 
     if not args.url:
-        if args.mode == "market-values":
-            args.url = MARKET_VALUES_URL
-        elif args.mode == "transfers":
-            args.url = TRANSFERS_URL
-        elif args.mode == "club-squad":
-            if not args.club_id:
-                p.error("--mode club-squad needs --club-id (or --url)")
-            args.url = club_squad_url(args.club_id, season=args.season)
-        elif args.mode == "player":
-            if not args.player_id:
-                p.error("--mode player needs --player-id (or --url)")
-            args.url = player_url(args.player_id)
+        if args.mode == "product":
+            if not args.category:
+                p.error("--mode product needs --category (a product slug, "
+                        "e.g. cm-mattress) or --url")
+            args.url = product_url(args.category)
+        else:
+            args.url = category_url(args.category or "")
 
-    if not is_supported_host(args.url):
-        why = unsupported_reason(args.url)
-        p.error(f"{site_host(args.url) or args.url!r} {why}. Supported: "
-                f"{', '.join(sorted(HOSTS))}.")
+    args.url = normalise_url(args.url)
+    supported, why = is_supported_url(args.url)
+    if not supported:
+        p.error(why)
     if args.mode not in PAGINATED_MODES and args.pages != 1:
         logger.warning("--pages %d is ignored in --mode %s.", args.pages, args.mode)
         args.pages = 1

@@ -1016,3 +1016,24 @@ def product_url(slug: str) -> str:
     if slug.startswith("products/"):
         slug = slug[len("products/"):]
     return f"https://{CANONICAL_HOST}/products/{slug}"
+
+
+def detect_bot_challenge(html: str, url: str = "") -> Optional[str]:
+    """Which refusal marker matched, or None — a NAME for the log line.
+
+    `detect_page_state` answers what to DO; this answers what to SAY. The
+    engines log the vendor beside the exit code so a red run can be read
+    without re-fetching the page, and `finish_run` puts it in the sidecar's
+    `stop_reason` as `blocked_{vendor}`.
+
+    On this site there is exactly one refuser — CloudFront — so the answer is
+    always "cloudfront" or None. It stays a lookup rather than a constant
+    because the day a second one appears, the log should say which.
+    """
+    text = (html or "")
+    prefix = unescape(text[:4096]).lower()
+    lowered = text[:4096].lower()
+    for marker in BOT_CHALLENGE_MARKERS:
+        if marker in prefix or marker in lowered:
+            return "cloudfront"
+    return None
