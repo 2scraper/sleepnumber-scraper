@@ -283,8 +283,82 @@ def history_check():
     return failed
 
 
+
+
+
+
+def published_check():
+    """Banned wording on the surfaces GitHub publishes, not just in files.
+
+    CLAUDE.md §21: the suite scans repo FILES, and a GitHub description is
+    not a file. The phrase §12 bans reached at least two public repo
+    descriptions in this family for exactly that reason — the check existed,
+    passed, and could not see the thing that was wrong.
+
+    So this reads back the description, topics and homepage through `gh` and
+    applies the same rules. It is not part of --all and not part of CI:
+    it needs network and an authenticated `gh`, and a CI job that fails
+    because a token expired is a check that teaches people to ignore checks.
+    Run it before publishing, and after any `gh repo edit`.
+
+        python3 .github/ci_checks.py --published-check
+    """
+    import json as _json
+    import shutil
+    import subprocess
+
+    if not shutil.which("gh"):
+        return ["gh is not installed, so the published surfaces were NOT "
+                "checked. That is a skip, not a pass."]
+
+    ad = "anti" + "detect"
+    banned = (" ".join(["cloud", "browser"]), f"{ad} browser",
+              "gate.2prx" + ".com", f"--{ad}")
+    try:
+        out = subprocess.run(
+            ["gh", "repo", "view", "--json",
+             "description,homepageUrl,repositoryTopics"],
+            capture_output=True, text=True, timeout=60, check=True).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        return [f"could not read the repo's published fields: {exc}"]
+
+    meta = _json.loads(out)
+    problems = []
+    surfaces = {
+        "description": meta.get("description") or "",
+        "homepage": meta.get("homepageUrl") or "",
+        "topics": " ".join(t["name"] for t in meta.get("repositoryTopics") or []),
+    }
+    for name, text in surfaces.items():
+        for phrase in banned:
+            if phrase in text.lower():
+                problems.append(f"the repo {name} contains a banned phrase; "
+                                f"write 'Scraping Browser API' instead")
+    if not surfaces["description"].strip():
+        problems.append("the repo has no description — GitHub search is a real "
+                        "discovery channel and it is off until this is set")
+    if len(surfaces["description"].split()) < 12:
+        problems.append("the description is shorter than 12 words; it should "
+                        "carry the words people actually search")
+    topics = [t["name"] for t in meta.get("repositoryTopics") or []]
+    # Say what was actually read. A check that prints nothing on success is
+    # indistinguishable from a check that silently did nothing, which is the
+    # failure mode §22 keeps finding — and this one has three separate ways
+    # to come back empty (no gh, no network, an unauthenticated token).
+    print(f"ok       description: {len(surfaces['description'].split())} words, "
+          f"{len(topics)} topics, homepage {surfaces['homepage'] or '(none)'}")
+    if len(topics) < 10:
+        problems.append(f"only {len(topics)} topics; aim for 10-15, they are "
+                        f"GitHub's own search surface")
+    if not surfaces["homepage"].strip():
+        problems.append("no homepage set — the field renders under the "
+                        "description and is the repo's only outbound link")
+    return problems
+
+
 CHECKS = {"help": help_check, "sample": sample_check,
-          "secret": secret_check, "history": history_check}
+          "secret": secret_check, "history": history_check,
+          "published": published_check}
 
 
 def main():
@@ -300,6 +374,11 @@ def main():
                         help="The same rules over every blob that has EVER "
                              "existed. For before publishing, not for CI — "
                              "see history_check(). Not included in --all.")
+    parser.add_argument("--published-check", action="store_true",
+                        help="Banned wording and completeness on the surfaces "
+                             "GitHub publishes (description, topics, "
+                             "homepage). Needs network and `gh`; not in --all, "
+                             "and not run by CI. A pre-publication step.")
     parser.add_argument("--all", action="store_true",
                         help="help, sample and secret. NOT history: that one "
                              "is a pre-publication step, and it shells out to "
@@ -308,7 +387,7 @@ def main():
 
     selected = [name for name in CHECKS
                 if getattr(args, f"{name}_check")
-                or (args.all and name != "history")]
+                or (args.all and name not in ("history", "published"))]
     if not selected:
         parser.error("pick at least one check, or --all")
 
