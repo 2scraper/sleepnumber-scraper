@@ -102,6 +102,13 @@ class PageOutcome:
     blocked_by: Optional[str] = None
     load_failed: bool = False
     state: Optional[str] = None
+    # The exact bytes the parser was given. Kept because the run's sidecar
+    # records the SITE's own arithmetic about the result set, which lives in
+    # the hydration payload — so it has to be re-read from the page we
+    # already have rather than asked of a browser that may have navigated on.
+    # Present on all three engines by contract: an engine that omitted it
+    # would silently write a sidecar missing fields its twins record.
+    html: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -497,6 +504,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         logger.warning("0 rows parsed — saved what the browser saw to %s.", debug_html)
 
     outcome.rows = rows
+    outcome.html = html
     outcome.final_url = final_url
     return outcome
 
@@ -598,7 +606,18 @@ def scrape(args) -> int:
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
 
+    # The SITE's own arithmetic about the result set, recorded beside the
+    # status because "complete" and "exhaustive" are different words (§21). A
+    # sidecar that says only "complete" is lying by omission: it means "we
+    # fetched everything this site would serve", which is worth knowing
+    # alongside how much of the catalogue that actually was.
+    arithmetic = {}
+    first_html = next((o.html for o in outcomes if getattr(o, "html", None)), None)
+    if first_html and args.mode == "listing":
+        arithmetic = page_flow.listing_arithmetic(first_html)
+
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
+                      extra=arithmetic or None,
                       blocked=blocked, stop_reason=stop_reason,
                       pages_requested=args.pages, pages_completed=len(ok_pages),
                       pages_failed=failed_pages, mode=args.mode,

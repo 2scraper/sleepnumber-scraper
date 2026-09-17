@@ -1,60 +1,47 @@
 #!/usr/bin/env python3
 """
-bbb-scraper — 2captcha Scraper API edition (fourth engine)
-==========================================================
+sleepnumber-scraper — 2Captcha Scraper API edition (fourth entry point)
+=======================================================================
 
-A fourth way to run this scraper. Unlike playwright_scraper.py /
-puppeteer_scraper.py / selenium_scraper.py, this one manages **no browser and
-no CDP session of its own**: it POSTs a URL to 2captcha's separate **Scraper
-API** (https://scraper.2captcha.com — a different product from the Scraping
-Browser API the other three reach through --cdp-endpoint), gets HTML back over
-plain HTTPS, and feeds it to this project's product_parser.
+Unlike playwright_scraper.py / puppeteer_scraper.py / selenium_scraper.py,
+this one manages NO browser locally. It posts the URL to 2Captcha's Scraper
+API, which runs the fetch on its own infrastructure and returns the HTML,
+and then hands that HTML to the same `product_parser.parse_products` the
+browser engines use — so the two paths cannot disagree about what a row is.
 
-Why you would want it: no Chromium to install, no CDP plumbing, runs from a
-tiny container or a lambda.
+WHEN IT HELPS HERE, AND WHEN IT DOES NOT
+-----------------------------------------
+Sleep Number's catalogue is entirely server-rendered into the page's
+hydration payload, so there is nothing to wait for and nothing to scroll:
+this is exactly the shape of page a browserless fetch handles well. The
+whole difficulty on this site is the EXIT ADDRESS, not the rendering.
 
-WHAT THIS SITE NEEDS — READ THIS FIRST
---------------------------------------
-On BBB this client is for **`--mode profile`**, and it is a genuinely good
-fit for it: a profile is ONE page, server-rendered, with everything in the
-first response. No scrolling, nothing to wait for — exactly the shape a
-browserless fetch handles well.
+Which is also the catch, and it is measured rather than assumed — see the
+README's "Access". Run it plain and read the exit code:
 
-It is NOT the way to read a listing, and that is not a limitation of this
-client. BBB's own `/api/search` endpoint answers an ordinary HTTPS request
-with no key, no proxy and no browser (measured 2026-09-16: HTTP 200, 57 KB,
-from a datacenter address). Paying for a rendered page to get data that is
-already free is a waste, so if you want listings, use one of the three
-browser engines — or just call the endpoint.
+    exit 0   the API's own exits reached the site
+    exit 3   they were refused, the same CloudFront 403 a datacentre address
+             gets. Then pass --cdp-url to route the fetch through a Scraping
+             Browser session, whose exit is residential.
 
-`--cdp-url` is REQUIRED here, and that is measured rather than assumed.
-2026-09-16, the same profile URL:
-
-    plain                     upstream 403, 12,889 bytes — Cloudflare's hard
-                              block. The Scraper API's own exits are
-                              datacenter addresses and BBB refuses them.
-    routed --cdp-url through  upstream 200, 113,389 bytes, profile parsed in
-    a Scraping Browser        full: name, A+, accreditation date, complaint
-                              totals.
-
-So the two 2Captcha products are used TOGETHER here: the Scraper API for the
-fetch-and-parse, the Scraping Browser for the exit. Without the second, this
-path reaches nothing on bbb.org.
+A sibling repo (bbb-scraper) measured its target refusing the Scraper API's
+own exits while the same task through a Scraping Browser session came back
+200 — so this is a live possibility rather than a hypothetical, and the flag
+exists for it.
 
 Usage
 -----
-    # routed through a Scraping Browser API session, which is what makes it
-    # reach the site at all
-    python3 scraper_api_client.py --mode profile \
-        --url "https://www.bbb.org/us/ny/bronx/profile/cleaning-services/proclean-maintenance-systems-inc-0121-134716" \
-        --cdp-url "ws://user:pass@cb.2captcha.com:9222" --timeout 90
+    python scraper_api_client.py --url https://www.sleepnumber.com/categories/mattresses
 
-    # the key comes from $TWOCAPTCHA_KEY and the endpoint from
-    # $BBB_CDP_ENDPOINT, so neither needs to be typed — a secret in
-    # argv is readable by anything that can run `ps`
+    python scraper_api_client.py \
+        --url https://www.sleepnumber.com/products/cm-mattress \
+        --cdp-url "$SLEEPNUMBER_CDP_ENDPOINT" --out cm
 
-Requires: pip install -r requirements.txt
-          (no playwright/selenium/pyppeteer needed for this engine)
+`--key` defaults to $TWOCAPTCHA_KEY and `--cdp-url` to
+$SLEEPNUMBER_CDP_ENDPOINT, so neither needs to be typed — a secret on a
+command line is readable by anything that can run `ps` (§3).
+
+Requires: pip install -r requirements.txt   (no browser at all)
 """
 
 import argparse
@@ -67,9 +54,10 @@ from typing import Optional
 
 import requests
 
-from product_parser import (BOT_CHALLENGE_MARKERS, DEFAULT_SORT,
-                            detect_bot_challenge, detect_page_state,
-                            parse_products, parse_profile)
+from product_parser import (BOT_CHALLENGE_MARKERS, detect_bot_challenge,
+                            detect_page_state, parse_products,
+                            category_url, product_url, normalise_url,
+                            is_supported_url)
 from output_writer import save
 import env_config
 
@@ -92,6 +80,12 @@ MAX_API_TIMEOUT = 120
 # a Scraping Browser that will not accept a connection, and two definitions
 # of one exit code is how a family's contract drifts.
 from output_writer import EXIT_API_ERROR  # noqa: E402
+
+# Internal marker, never returned to the shell — main() maps it to 3. It
+# separates "refused, and trying again will be refused identically" from
+# "a challenge, which another attempt may clear". Both are exit 3 to the
+# caller; only one is worth paying for twice.
+EXIT_REFUSED_DETERMINISTIC = -3
 
 def _mask_credentials(url: str) -> str:
     """Never print a username:password embedded in a ws://... or http://... URL."""
@@ -195,6 +189,16 @@ def main() -> int:
     attempts = max(1, args.retries + 1)
     for attempt in range(1, attempts + 1):
         rc = _run_once(args, attempt, attempts)
+        if rc == EXIT_REFUSED_DETERMINISTIC:
+            # A CloudFront deny is a property of the EXIT ADDRESS, and the
+            # Scraper API's exits do not change between attempts on this
+            # site: measured 2026-09-17, two consecutive attempts returned
+            # the identical 919-byte refusal and were billed $0.0005 each.
+            # Retrying it buys a second copy of a certainty, which is §8's
+            # "detected is not the same as paying" with a price tag. A
+            # challenge page WOULD be worth retrying — that is why the two
+            # are different return values rather than one.
+            return 3
         if rc != 3 or attempt == attempts:
             return rc
         logger.info("Challenge page on attempt %d/%d — retrying in %ds.",
@@ -231,15 +235,15 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
         with open(dump, "w", encoding="utf-8") as f:
             f.write(html)
         logger.error(
-            "BBB did not serve the Scraper API's request (upstream HTTP %s, "
-            "%d bytes) — saved to %s. Measured 2026-09-16 on this exact URL: "
-            "the Scraper API's own exits are datacenter addresses and BBB "
-            "refuses them (403, 12,889 bytes), while the SAME task routed "
-            "through a Scraping Browser session returned 200 and 113,389 "
-            "bytes with the profile parsing in full. Pass --cdp-url. This is "
-            "exit 3, distinct from an empty result (exit 4).",
+            "Sleep Number did not serve the Scraper API's request "
+            "(upstream HTTP %s, %d bytes) — saved to %s. This site refuses "
+            "every datacentre address with an identical CloudFront 403, and "
+            "the Scraper API's own exits are datacentre addresses. Pass "
+            "--cdp-url to route the fetch through a Scraping Browser "
+            "session, whose exit is residential. This is exit 3, distinct "
+            "from an empty result (exit 4).",
             upstream_status, len(html), dump)
-        return 3
+        return EXIT_REFUSED_DETERMINISTIC
 
     vendor = detect_bot_challenge(html)
     if vendor:
@@ -248,28 +252,36 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             vendor, len(html),
         )
         logger.error("A challenge page is not a final answer — retry before "
-                     "concluding anything (--retries). On BBB what clears it "
+                     "concluding anything (--retries). On this site what "
+                     "clears a refusal is a different EXIT, not a retry — "
                      "is the EXIT, not a solver: pass --cdp-url to route "
                      "through a Scraping Browser session, or use "
                      "playwright_scraper.py / puppeteer_scraper.py directly.")
         return 3
 
-    if args.mode == "profile":
-        row = parse_profile(html, args.url)
-        products = [row] if row is not None else []
-    else:
-        products = parse_products(html, args.url, mode=args.mode,
-                                  sort=DEFAULT_SORT)
+    # The SAME parser the three browser engines call, with the same
+    # arguments, so a row produced here and a row produced there cannot
+    # differ. `page` is threaded for a listing and left None for a detail
+    # page, exactly as each engine's _parse_for_mode does it.
+    products = parse_products(html, args.url,
+                              page=1 if args.mode == "listing" else None)
     if args.category:
         for row in products:
             row.category = args.category
-    logger.info("Parsed %d business(es).", len(products))
+    if products:
+        priced = sum(1 for r in products if r.price is not None)
+        logger.info("Parsed %d row(s); price coverage %d/%d.",
+                    len(products), priced, len(products))
+    else:
+        logger.error("The Scraper API returned %d bytes that parsed to zero "
+                     "rows. Writing nothing rather than replacing a previous "
+                     "good result with an empty one.", len(html))
 
     if not products:
         dump = f"{args.out}_scraperapi_debug.html"
         with open(dump, "w", encoding="utf-8") as f:
             f.write(html)
-        logger.warning("0 businesses parsed — saved the raw response to %s so "
+        logger.warning("0 rows parsed — saved the raw response to %s so "
                        "you can see what actually came back.", dump)
         return 4
 
@@ -278,14 +290,14 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="BBB scraper — 2captcha Scraper API edition (no local "
-                    "browser). Built for --mode profile, which is one "
-                    "server-rendered page and a good fit. NOT the way to "
-                    "read a listing: BBB's own /api/search answers an "
-                    "ordinary HTTPS request with no key and no proxy, so "
-                    "paying for a rendered page there buys nothing. "
-                    "--cdp-url is REQUIRED — the Scraper API's own exits are "
-                    "datacenter addresses and BBB refuses them.")
+        description="Sleep Number scraper — 2Captcha Scraper API edition (no local "
+                    "browser). Both page kinds are a good fit: Sleep "
+                    "Number server-renders its whole catalogue into the "
+                    "page, so there is nothing to wait for and nothing to "
+                    "scroll. --cdp-url is effectively REQUIRED — measured "
+                    "2026-09-17, the Scraper API's own exits are datacentre "
+                    "addresses and this site answers them with the same "
+                    "919-byte CloudFront 403 it gives any other.")
     # NOT required: prefer the TWOCAPTCHA_KEY env var. A key passed on the
     # command line is visible to anyone who can run `ps`, and it lands in
     # shell history and in any log that echoes the command line.
@@ -293,18 +305,18 @@ def parse_args():
                    help="2captcha.com API key (sent as a Bearer token). "
                         "Defaults to $TWOCAPTCHA_KEY, which is the safer way to pass it.")
     p.add_argument("--url", default=None,
-                   help="A bbb.org URL. A business profile is what this path "
-                        "is for; a listing URL works too but BBB's own "
+                   help="A www.sleepnumber.com URL — a /categories/…, "
+                        "/collections/… or /products/… page. Defaults to "
                         "endpoint answers that for free. Required, unless "
-                        "BBB_URL is set in the environment or in .env.")
-    p.add_argument("--mode", choices=["search", "category", "profile"],
+                        "$SLEEPNUMBER_URL, then to the default category.")
+    p.add_argument("--mode", choices=["listing", "product"],
                    default="profile",
                    help="Default profile, unlike the browser engines, "
                         "because a profile is the only page kind this path "
                         "reads that the free endpoint cannot.")
     p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
-    p.add_argument("--out", default="bbb_businesses_scraperapi", help="Output file prefix")
+    p.add_argument("--out", default="sleepnumber_products_scraperapi", help="Output file prefix")
     p.add_argument("--timeout", type=int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
@@ -335,12 +347,16 @@ def parse_args():
     # --cdp-endpoint, so the env mapping is spelled out instead of defaulted.
     env_config.apply(args, keys={
         "TWOCAPTCHA_KEY": "key",
-        "BBB_CDP_ENDPOINT": "cdp_url",
-        "BBB_URL": "url",
+        "SLEEPNUMBER_CDP_ENDPOINT": "cdp_url",
+        "SLEEPNUMBER_URL": "url",
     })
     if not args.url:
-        p.error("no --url given, and BBB_URL is not set in the environment "
-                "or in .env.")
+        args.url = (product_url(args.category) if args.mode == "product" and args.category
+                    else category_url(args.category or ""))
+    args.url = normalise_url(args.url)
+    supported, why = is_supported_url(args.url)
+    if not supported:
+        p.error(why)
     return args
 
 

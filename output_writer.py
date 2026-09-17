@@ -445,44 +445,37 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # Stop reasons that mean the run saw everything there was to see. Anything
 # else ended the page loop early, so the result is only a partial view.
 #
-# Woolworths publishes no `link[rel=next]`, no pagination control and no
-# numbered anchors anywhere — it publishes no product markup at all, so there
-# is nothing to put one in. What it has instead is better: a page is an
-# INTEGER in a request body, so page N is addressable without reading page
-# N-1, and `--concurrency` is meaningful here where it is not in every
-# sibling repo (§7).
+# "single_page_mode" is a COMPLETE reason, and leaving it out was a real bug
+# here: `--mode product` reads a detail page, which HAS no second page, and
+# reporting it `partial` (exit 6) made a correct run look like a failure and
+# would have made diff_runs.py refuse to compare two product runs. Found by
+# running the mode rather than by reading the code.
 #
-# That makes the terminating condition data rather than markup by
-# construction, which is what §7 asks for. The difficulty is the shape that
-# data takes — see below.
+# "no_new_products" is this site's data-side termination condition and the
+# reason §7's rule matters here specifically: `?page=N` is IGNORED by Sleep
+# Number. `/categories/sheets-pillowcases?page=2` and `?page=99` both answer
+# HTTP 200 carrying page ONE — the same ten products, with the payload's own
+# `page` field still reading 1. A count-based loop would therefore never
+# terminate, and a selector-based one has nothing to read. "This page added
+# no sku we had not already seen" is the only condition that is true of the
+# catalogue rather than of the markup.
 #
-# "pagination_exhausted" is the data-side termination condition here, and on
-# this site recognising it is the whole difficulty: the listing has a last
-# page but the API does not admit to it. Past the end it keeps answering HTTP
-# 200 with `Success: true` and NOTHING BUT PROMOTED ADS — page 17 of a
-# 16-page category returned 1 row, page 18 returned 8 and page 99 returned 8,
-# every one of them sponsored and every one a repeat of an ad page 1 already
-# carried. So the condition is "no ORGANIC product this run had not already
-# seen", never "the page was empty", and `page_flow.advance_page` is where it
-# is decided.
+# "pagination_exhausted" means the site's own arithmetic said there was no
+# further page — `last_page: true`, which is what every category measured on
+# this site returns on its first response, since `per_page` is 100 and the
+# largest category holds 20 products.
 #
-# It is a COMPLETE reason, and that distinction is the point of this tuple: a
-# run that asked for 8 pages of a 2-page listing and stopped at 2 read the
-# whole listing. Reporting it `partial` (exit 6) would make every correct
-# run of a small category look like a failure, and would put the canary
-# permanently red — which teaches everyone to ignore the canary (§11).
+# All three are COMPLETE, and the distinction is the point of this tuple: a
+# run that asked for 5 pages of a 1-page category and stopped at 1 read the
+# whole category. Reporting that `partial` would put the canary permanently
+# red, which teaches everyone to ignore the canary (§11).
 #
-# What must NOT reach here is a listing that stopped because the API was
-# REFUSED. The document answers 200 while `/apis/ui/...` behind it is
-# throttled, so the two are the same observation from the outside; the
-# engines keep them apart by recording the refusal count and reporting
-# `api_error` instead, because a throttled run reported as an exhausted
-# listing is how a run holding page 1 says "complete" (§7).
-#
-# "no_new_products" is kept for the family's shape, so a consumer that
-# branches on a sibling repo's stop reason keeps working.
+# What must NOT reach here is a run that stopped because it was REFUSED.
+# CloudFront's refusal and an empty category are different facts with
+# different exit codes (§8), and page_flow.STATE_POLICY is what keeps them
+# apart before this tuple is ever consulted.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted",
-                         "no_new_products")
+                         "no_new_products", "single_page_mode")
 
 
 def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,

@@ -765,6 +765,29 @@ def _fallback_from_links(html: str, url: str, page: Optional[int]) -> List[Produ
 # Page state
 # ---------------------------------------------------------------------------
 
+_BLANK_BODY_RE = re.compile(r"<body[^>]*>\s*</body>", re.I)
+
+
+def _is_blank_document(html: str) -> bool:
+    """A document the browser produced because nothing arrived.
+
+    Structural, not a size test: an empty <body>, no hydration payload and no
+    reference to the site's own assets. A real page fails all three.
+    """
+    text = html or ""
+    if len(text) > 4096:
+        return False
+    if "__reactRouterContext" in text:
+        return False
+    if any(marker in text.lower() for marker in SITE_ASSET_MARKERS):
+        return False
+    stripped = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", text, flags=re.S | re.I)
+    body = re.search(r"<body[^>]*>(.*?)</body>", stripped, re.S | re.I)
+    if body is None:
+        return not re.sub(r"<[^>]+>", "", stripped).strip()
+    return not re.sub(r"<[^>]+>", "", body.group(1)).strip()
+
+
 def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
                       headers: Optional[Dict[str, str]] = None) -> str:
     """One of: content | blocked | notfound | empty | unknown.
@@ -815,6 +838,25 @@ def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
     #    a product description read as a marker.
     prefix = unescape(text[:4096]).lower()
     if any(marker in prefix or marker in lowered[:4096] for marker in BOT_CHALLENGE_MARKERS):
+        return "blocked"
+
+    # 2b. A BLANK document. Not an interstitial and not a refusal: nothing
+    #     arrived at all. Chromium renders `<html><head></head><body></body>`
+    #     when a navigation fails outright — which is what a proxy that could
+    #     not authenticate produces, and Selenium cannot authenticate a proxy
+    #     (see selenium_scraper.py and the README's "Engine limits").
+    #
+    #     This is structural rather than a size threshold: no payload, no
+    #     asset reference, and a body with nothing in it. Sleep Number serves
+    #     either ~190 KB of application HTML or a 919-byte CloudFront
+    #     refusal, and neither is this.
+    #
+    #     It answers `blocked` rather than `empty` deliberately. The
+    #     difference is what the CALLER is told: `empty` is exit 4, "this
+    #     category has no products", which is a claim about the catalogue —
+    #     and here the catalogue was never asked. `blocked` is exit 3, "we
+    #     did not get the page", which is true.
+    if _is_blank_document(text):
         return "blocked"
 
     # 3. Structural: was this built out of the site's own assets? A served
