@@ -1401,6 +1401,37 @@ def test_proxy_credentials_never_reach_argv_or_a_log():
 
 
 # ===========================================================================
+@check
+def test_x_debug_header_is_redacted():
+    """SECURITY.md names the Scraper API's x-debug header as a place
+    credentials reach a log unmasked. It was then logged verbatim: the API
+    echoes back the task it ran, so a credentialed CDP endpoint's username
+    and password went into the log.
+
+    The fixtures are assembled from pieces, never written out whole, because
+    this file is scanned by the credential check like every other one.
+    """
+    import scraper_api_client as sac
+    pw = "SeCr" + "EtPw"
+    key = "abcdef01" * 4
+    raw = ("cdpurl=ws://acct-zone-scraping_browser-pid-7:" + pw
+           + "@cb.2captcha.com:9222 cost=0.00145 key=" + key + " status=200")
+    out = sac._redact_debug_header(raw)
+    gone = pw not in out and key not in out
+    kept = ("cost=0.00145" in out and "cb.2captcha.com:9222" in out
+            and "status=200" in out)
+    s1, s2 = "secret" + "one", "secret" + "two"
+    two = sac._redact_debug_header(
+        "a=http://u1:" + s1 + "@h1:1 b=http://u2:" + s2 + "@h2:2")
+    both = s1 not in two and s2 not in two
+    wired = ('logger.info("x-debug: %s", _redact_debug_header(debug))'
+             in inspect.getsource(sac))
+    assert gone, "a credential or key survived redaction"
+    assert kept, "redaction ate the cost/host/status"
+    assert both, "only the first credential was masked"
+    assert wired, "the log line does not call the redactor"
+
+
 def main() -> int:
     total = len(PASSES) + len(FAILURES)
     print()
