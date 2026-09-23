@@ -88,8 +88,8 @@ import env_config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("playwright_scraper")
 
-# Modes with more than one page. `player` and `club-squad` read exactly one
-# page — see the module docstring.
+# Modes with more than one page. `product` reads exactly one page — see the
+# module docstring.
 PAGINATED_MODES = page_flow.PAGINATED_MODES
 # The only mode measured to be independently addressable — see
 # page_flow.pagination_is_addressable.
@@ -627,7 +627,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         else:
             logger.info("No rows appeared within %.0fs (%d/%d matched) — if "
                         "this is a genuinely empty page (an exhausted "
-                        "listing, an empty squad), that is the expected "
+                        "listing, an empty category), that is the expected "
                         "answer.", content_timeout / 1000, seen, ready_count)
         html = _content_when_settled(session.page) or html
 

@@ -1,11 +1,12 @@
 # sleepnumber-scraper
 
+[![release](https://img.shields.io/github/v/release/2scraper/sleepnumber-scraper?sort=semver)](https://github.com/2scraper/sleepnumber-scraper/releases)
 [![tests](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/tests.yml)
 [![canary](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/canary.yml)
 [![Python](https://img.shields.io/badge/python-3.9%20%E2%80%93%203.13-blue)](pyproject.toml)
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer%20%7C%20Scraper%20API-informational)](#engines)
-[![runs without an account](https://img.shields.io/badge/2Captcha%20account-not%20required%20to%20run-brightgreen)](#do-you-need-any-of-the-paid-products)
+[![needs a residential IP](https://img.shields.io/badge/needs-a%20residential%20IP-orange)](#access-read-this-before-anything-else)
 
 Scrapes [sleepnumber.com](https://www.sleepnumber.com): smart beds, mattresses,
 bases, bedding and furniture — **one row per size variant**, with its own sku,

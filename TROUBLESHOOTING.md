@@ -8,94 +8,56 @@ Check `--dump-html PATH` first — it writes the exact bytes the parser was
 given, whether the run succeeded or not, so you can see what actually
 arrived instead of guessing.
 
-Whether www.sleepnumber.com treats a datacentre or VPN address differently
-from a residential one is **genuinely unmeasured for v0.1** — see README's
-"Known limitations". This repo's own build environment could not complete a
-live browser connection to the site at all to check (the failure traced back
-to the *build sandbox's own* egress allowlist, not the site), and a single
-**proxied** fetch of each page kind this repo covers came back clean with no
-challenge markers. So a red exit 3 from a plain CI runner or a VPS is itself
-useful information, not a known-and-expected outcome the way it is for this
-family's e-commerce members. Try again with `--proxy` set to a residential
-exit; if that clears it, please report back (an issue, or a note in a PR) —
-that measurement belongs in the README for the next person.
+**If you are on a VPS, a CI runner or a container, this is expected.**
+Measured 2026-09-17 (README, "Access"): every URL on www.sleepnumber.com,
+`/robots.txt` included, answers a datacentre address with an identical
+919-byte CloudFront "Request blocked" 403 — curl, a full browser header set,
+headless Chromium and the Scraper API's own exits alike. A GB and a US
+residential exit were both served 200 the same day, so it is datacentre
+reputation, not geography.
 
-If a proxy does not help, check `detect_bot_challenge`'s markers
-(`product_parser.BOT_CHALLENGE_MARKERS`) against the dumped HTML — they
-cover Cloudflare, DataDome, PerimeterX/HUMAN, reCAPTCHA and hCaptcha, but
-were not measured against a real challenge from this site, so a genuinely
-new one could go unrecognised (falling through to the generic `"blocked"`
-bucket via a non-2xx status).
+There is no captcha on that refusal — no `x-amzn-waf-action` header, no
+widget — so no solver can help. What helps is a different exit: set
+`SLEEPNUMBER_PROXY` to a residential proxy in `.env`, or use
+`--cdp-endpoint` with a Scraping Browser profile that has a proxy attached.
+`tools/waf_probe.sh` answers "is this exit being served" in one command.
+
+**If you are already on a residential exit**, a rotating gateway
+occasionally misses: 14 of 15 requests through one answered 200 and one
+never connected. `--retries` and `--proxy-block-retries` exist for that, and
+a pinned `-region-` exit avoids it.
 
 ## Exit 4 (zero rows) on a URL that plainly has data in a browser
 
-**`--mode club-squad`** — check the club id and `--season`. A season with no
-squad data yet, or a wrong id, answers 200 with a page that has no table on
-it, which is a correct "empty" answer, not a bug.
+**Not every `/categories/…` URL is a listing.** Curated landing pages such as
+`/categories/beds-on-sale` carry no `products` key at all; the scraper
+reports that as `no_listing` rather than as an empty category. Use a real
+category or `collections/…` URL.
 
-**`--mode market-values` / `--mode transfers`** past page 1 — you may be one
-page past the end of the ranking/listing. Both modes stop and report a
-`no_new_products`/exhausted result rather than erroring, which is a
-*complete* answer, not a truncated one — check `stop_reason` in the
-`.meta.json` sidecar.
-
-**`--mode player`** — the header selector
-(`header.data-header[itemtype="https://schema.org/Person"]`) did not match.
-Either the player id is wrong, or the profile page's header markup has
-moved; `--dump-html` tells you which.
+**`/products/{slug}` is not the model's `slug`.** `--mode product` needs the
+canonical URL segment (`cm-mattress`, not `comfortmode`); a plausible-looking
+wrong one answers with the site's own 404, which is a full 200-KB page.
 
 ## The row count is right but a column is empty
 
-**`price`/`currency` is `null` on a real player.** For `market-values` and
-`club-squad`, that is very likely a genuine "no market value published"
-player (a young academy player, a very old veteran, a free agent) —
-Manchester City's 2025/26 squad measured 36 of 43 priced, and the 7 nulls
-were real. Check the player's own profile page before assuming a bug:
-`"-"` in the market-value cell parses to `None`, never `0`, on purpose (see
-`parse_market_value`'s docstring).
+**`original_price` and `discount_pct` null on most rows.** Expected: the
+payload's regular price equals the sale price on everything not discounted
+(198 of 211 variants on the sheets category), and `original_price` is only
+set when the regular price is genuinely higher.
 
-**`joined_date`/`contract_until`/`agent` are all `null` on a `--mode
-player` row.** This project found and fixed exactly this bug once — the
-profile header's `data-header__label` class appears on both `<li>` and
-`<span>` tags, and an earlier version of `_label_map` matched only `li`. If
-you see it again after a site change, check which tag the label moved to.
-
-**`from_club`/`to_club` look wrong or doubled on a transfer.** See
-`_club_cell_with_league`'s docstring — a transfer row's club cell can hold
-two `<a>` tags (an image-only wrapper and the real text-bearing anchor), and
-reading the wrong one produces exactly this kind of garbled name. Also
-possible: the site's own `title` attribute is genuinely doubled for the
-"Without Club" free-agent placeholder, which `_detitle()` exists to catch.
-
-**`fee_type` is `"unknown"` on a lot of rows.** That is the fallback for a
-Fee cell this parser does not recognise — check whether the site added a
-new fee-presentation format beyond disclosed/loan/free/undisclosed ("?").
-
-## `--mode market-values --pages N` reports `partial` (exit 6) past page 1
-
-Read this together with README's "the gallery pagination trap" section
-first — it may not be a bug at all. This mode is USUALLY independently
-addressable (a plain `?page=N`, same as transfers — confirmed on 28 of 29
-consecutive fetches in the 2026-09-10 re-measurement), but on the rare run
-where page 1's own next-link disagrees with that construction (the
-`galerie/{uuid}` shape, whose stateless page-2 fetch replays page 1), this
-scraper correctly falls back to chaining the site's own pagination link one
-page at a time inside a single browser session. If that link is ever
-missing, stale, or the fallback runs out mid-chain, the honest answer is a
-partial result with a `stop_reason` naming why — not a silently duplicated
-or skipped page. If you see `partial` on EVERY run rather than occasionally,
-that is worth reporting — it would mean the intermittent shape has become
-the norm, which this project has not seen but has not ruled out either.
+**`rating` and `review_count` both null.** Expected on an unreviewed
+product: the site reports `0`, and both columns go null together rather than
+dragging an average toward zero.
 
 ## "Blocked" on a page that clearly rendered
 
 The Scraping Browser API's auto-solve extension injects its own scripts
-into every page it loads, and those can contain a vendor string
-(`cf-turnstile` is the one this family has hit before) that would otherwise
-look like a real challenge marker on an otherwise clean page. This repo
-strips `chrome-extension://`/`moz-extension://`-sourced script tags before
-matching (see `product_parser._EXTENSION_TAG_RE`). If you see this anyway,
-the stripping pattern may need widening for a new extension version.
+into every page it loads, and those can contain vendor strings such as
+`cf-turnstile`. This repo's marker set is only CloudFront's own refusal
+wording (`Request blocked`, `Generated by cloudfront`), so nothing that
+extension injects can match it (README, "Block detection"). If you see this
+anyway, run `--dump-html` and check which marker fired — the set may have
+been widened since.
 
 ## HTTP 500 from the Scraping Browser endpoint
 
