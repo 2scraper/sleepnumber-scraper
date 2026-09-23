@@ -32,6 +32,12 @@ nobody discovers it from a bill or a broken cron job.
     already answers "is this exit served".
   - `.dockerignore` ignored `vrbo_products.*`. It now ignores this repo's
     default `--out` prefix, `sleepnumber_products.*`.
+  - `diff_runs.py`: its `--price-tolerance-pct` help said "each country site
+    quotes its own currency" (mediamarkt's), a comment described a
+    `lowest_price_30d` column this repo does not have, and the
+    `price_source` comment named `jsonld+dom` / `dom` values this parser
+    never writes. Rewritten for one USD storefront and the real
+    `payload` / `payload+jsonld` / `url-fallback` values.
   - Stray comments and one log line: "an empty squad", `player`/`club-squad`
     modes, a "measured headful on 2026-09-16" pyppeteer claim, and a
     tests.yml note saying this site refuses headless (it does not).

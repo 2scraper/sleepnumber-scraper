@@ -51,12 +51,6 @@ from typing import Dict, List, Optional, Tuple
 
 from output_writer import UNIQUE_BY_SKU_MODES
 
-# `lowest_price_30d` is tracked alongside the other price fields on purpose.
-# It moves only when a real price change enters or leaves Sleep Number's
-# rolling 30-day window, so a change in it is information about the shop's
-# recent pricing rather than noise — and a price monitor that watched only
-# `price` would miss a product whose current price held while its recent
-# floor moved underneath it.
 # What a change in this repo MEANS. `size` is deliberately absent: it is part
 # of a row's identity here, not an attribute of it — a variant's sku encodes
 # its size, so a row whose size changed is a different row, not a changed one.
@@ -152,13 +146,12 @@ def diff_products(old: List[dict], new: List[dict],
             continue
 
         # A row whose price_source differs between runs is not comparable on
-        # price: here that means one run had its structured price confirmed
-        # against a rendered tile ("jsonld+dom") while the other did not
-        # ("jsonld"), or fell back to reading the DOM alone ("dom"). The
-        # figures should agree, and when they do not, the difference is in
-        # how OUR two snapshots rendered, not in what the shop charges.
-        # Reporting it as a price change would be a false alarm about the
-        # site. Non-price fields still compare fine.
+        # price: here that means one run had the payload price confirmed by
+        # JSON-LD ("payload+jsonld") while the other had no JSON-LD to check
+        # against ("payload"), or fell back to the URL pattern and has no
+        # price at all ("url-fallback"). The difference is in how OUR two
+        # snapshots were read, not in what the shop charges. Non-price
+        # fields still compare fine.
         sources = (before.get("price_source"), after.get("price_source"))
         if sources[0] != sources[1] and any(f in field_changes for f in PRICE_FIELDS):
             price_part = {f: v for f, v in field_changes.items() if f in PRICE_FIELDS}
@@ -212,14 +205,14 @@ def _print_summary(result: dict) -> None:
     for c in result.get("within_tolerance", []):
         moves = ", ".join(
             f"{f}: {v['old']} -> {v['new']}" for f, v in c["changes"].items())
-        print(f"  ~ {c['sku']}  {c['title']}  {moves}  [within --price-"
-              f"tolerance-pct: an exchange-rate tick, not a price change]")
+        print(f"  ~ {c['sku']}  {c['title']}  {moves}  [within "
+              f"--price-tolerance-pct]")
     for c in result["source_changed"]:
         src = c["price_source"]
         deltas = ", ".join(f"{f}: {v['old']!r} -> {v['new']!r}" for f, v in c["changes"].items())
         print(f"  ? {c['sku']}  {c['title']}  {deltas}  "
               f"[price_source {src['old']!r} -> {src['new']!r}: the two runs "
-              f"rendered differently, so this is not a site-side price change]")
+              f"read the price differently, so this is not a site-side price change]")
     unmatchable = result["unmatchable_old"] + result["unmatchable_new"]
     if unmatchable:
         print(f"[!] {unmatchable} row(s) across both files had no sku or a "
@@ -307,11 +300,11 @@ def parse_args():
                    help="Write the full diff as JSON to this path too.")
     p.add_argument("--price-tolerance-pct", type=float, default=0.0,
                    metavar="PCT",
-                   help="Treat a price move smaller than PCT%% as an exchange-"
-                        "rate tick rather than a price change: reported "
-                        "separately and ignored by --fail-on-change. Default 0 "
-                        "(report every cent), which is what a Sleep Number run "
-                        "wants: each country site quotes its own currency, so "
+                   help="Treat a price move smaller than PCT%% as noise "
+                        "rather than a price change: reported separately and "
+                        "ignored by --fail-on-change. Default 0 (report every "
+                        "cent), which is what a Sleep Number run wants: one US "
+                        "storefront, prices stated as integer cents in USD, so "
                         "there is no conversion drift to absorb. The flag is "
                         "inherited from this scraper family; set it non-zero "
                         "only with a reason you can state.")
@@ -346,9 +339,10 @@ def main() -> int:
         print(f"[+] Full diff written to {args.out}")
 
     # Neither `source_changed` nor `within_tolerance` is a reason to fail.
-    # The first means our own two snapshots rendered differently; the second
-    # means an exchange rate moved. Neither says anything about the site, and
-    # alerting on either would train whoever reads the alert to ignore it.
+    # The first means our own two snapshots read the price differently; the
+    # second means a move inside a tolerance the caller chose. Neither says
+    # anything about the site, and alerting on either would train whoever
+    # reads the alert to ignore it.
     if args.fail_on_change and (result["added"] or result["removed"] or result["changed"]):
         return 1
     return 0
