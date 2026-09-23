@@ -4,9 +4,9 @@
 #
 #   pip install -r requirements.txt -r requirements-puppeteer.txt
 #
-# pyppeteer downloads its own Chromium on first run, which this site accepts
-# — measured headful on 2026-09-16. You can point it at an installed browser
-# instead if you prefer:
+# pyppeteer downloads its own Chromium on first run; the README's Engines
+# table has it returning rows byte-identical to Playwright's on the same URL.
+# You can point it at an installed browser instead if you prefer:
 #
 #   python3 puppeteer_scraper.py --chromium-path /usr/bin/chromium ...
 #

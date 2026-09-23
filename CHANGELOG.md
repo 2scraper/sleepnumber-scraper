@@ -13,6 +13,39 @@ nobody discovers it from a bill or a broken cron job.
 
 ### Fixed
 
+- **Leftovers from the repos this one was copied from** (woolworths-scraper,
+  transfermarkt-scraper, vrbo-scraper):
+  - `TROUBLESHOOTING.md` described Transfermarkt's modes (`market-values`,
+    `club-squad`, `player`) and said datacentre access was unmeasured. It now
+    carries this site's CloudFront 403, `no_listing` and column traps from
+    the README.
+  - `CONTRIBUTING.md` and both issue templates described Woolworths' API,
+    shadow-DOM tiles and Akamai. Rewritten for the React Router payload and
+    CloudFront.
+  - `tools/browser_profile_client.py` told you to run
+    `--mode market-values`, which this repo rejects; it now prints a
+    `--category mattresses` run.
+  - `tools/verify_browser_api.sh` was Transfermarkt's AWS WAF probe
+    (`--mode market-values`, a `waf=captcha` control), and failed on its
+    first line here. Removed rather than ported: this site serves no
+    challenge for the Browser API to clear, and `tools/waf_probe.sh`
+    already answers "is this exit served".
+  - `.dockerignore` ignored `vrbo_products.*`. It now ignores this repo's
+    default `--out` prefix, `sleepnumber_products.*`.
+  - `diff_runs.py`: its `--price-tolerance-pct` help said "each country site
+    quotes its own currency" (mediamarkt's), a comment described a
+    `lowest_price_30d` column this repo does not have, and the
+    `price_source` comment named `jsonld+dom` / `dom` values this parser
+    never writes. Rewritten for one USD storefront and the real
+    `payload` / `payload+jsonld` / `url-fallback` values.
+  - Stray comments and one log line: "an empty squad", `player`/`club-squad`
+    modes, a "measured headful on 2026-09-16" pyppeteer claim, and a
+    tests.yml note saying this site refuses headless (it does not).
+- **README badges.** Added the release badge. The access badge said a
+  2Captcha account is not required, which is true only on a home connection:
+  every datacentre address gets a CloudFront 403. It now reads "needs a
+  residential IP".
+
 - **The site's own 404 was recognised only by its status code.**
   `_NOT_FOUND_MARKERS` read `<title>not found` and `page not found`, and
   NEITHER is on the page Sleep Number actually serves: `/products/i8` comes
@@ -55,6 +88,9 @@ claimed:
   untouched.
 - `diff_runs.py` separates a real price move from a `price_source` change,
   and `--fail-on-change` ignores the latter.
+
+- `SECURITY.md` said this project has no releases or version tags; it has
+  both. "Supported versions" now names the latest release and `main`.
 
 
 ## [0.1.0] — 2026-09-17
