@@ -1432,6 +1432,50 @@ def test_x_debug_header_is_redacted():
     assert wired, "the log line does not call the redactor"
 
 
+# ===========================================================================
+@check
+def test_scraper_api_waitfor_is_an_object():
+    """Both Scraper API defects measured 2026-09-23, through the real
+    parse_args() and fetch_html(), with requests.post captured (no network).
+
+    waitFor went out as a JSON-encoded STRING, which the live API refuses
+    with HTTP 422 and still bills; and the target's status was read from
+    `status`, which is the API's own verdict string ("success"), so a
+    target 403/503 never reached detect_page_state. The real field is
+    `http_code`."""
+    import scraper_api_client as sac
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {}
+        text = ""
+
+        def json(self):
+            return {"status": "success", "http_code": 403, "headers": {},
+                    "body": "<html></html>"}
+
+    def _post(url, **kw):
+        captured.update(kw)
+        return _Resp()
+
+    real_post, real_argv = sac.requests.post, sys.argv
+    sac.requests.post = _post
+    sys.argv = ["scraper_api_client.py", "--key", "k" * 8,
+                "--url", LISTING_URL, "--wait-text", "Mattress"]
+    try:
+        _html, status = sac.fetch_html(sac.parse_args())
+    finally:
+        sac.requests.post, sys.argv = real_post, real_argv
+    wf = (captured.get("json") or {}).get("waitFor")
+    assert isinstance(wf, dict) and wf.get("text") == "Mattress", (
+        "Scraper API: --wait-text must send waitFor as an OBJECT, not a "
+        "JSON-encoded string (HTTP 422 and still billed, 2026-09-23); got %r" % (wf,))
+    assert isinstance(status, int) and status == 403, (
+        "Scraper API: the status handed onward must be the target's "
+        "http_code (403, an int), not the API's verdict 'success'; got %r" % (status,))
+
+
 def main() -> int:
     total = len(PASSES) + len(FAILURES)
     print()
