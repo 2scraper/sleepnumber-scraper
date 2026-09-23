@@ -258,12 +258,12 @@ jobs:
         # shared library, and every run then dies at launch rather than at
         # build. Launching it is the only check that catches that.
         #
-        # HEADFUL specifically, through the real entrypoint, because that is
-        # the only mode this site is served in — headless was refused 4 of 4
-        # URLs from a datacentre address. A headless launch check would pass
-        # on an image whose Xvfb is broken, which is exactly the image this
-        # job shipped twice before it was caught: once dying with "xauth
-        # command not found" and once hanging forever inside `xvfb-run -a`.
+        # HEADFUL, through the real entrypoint, as the stricter of the two
+        # launches: it needs the display libraries a headless launch can do
+        # without. This site itself is served headless (see the Dockerfile's
+        # header), so the image's default path is the easier one. The check
+        # came from woolworths-scraper, whose site refuses headless and whose
+        # image shipped twice with a broken Xvfb before this caught it.
         run: |
           docker run --rm --entrypoint sh sleepnumber-scraper:ci -c '
           Xvfb :99 -screen 0 1440x900x24 -nolisten tcp >/dev/null 2>&1 &

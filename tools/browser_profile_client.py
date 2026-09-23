@@ -322,8 +322,8 @@ def cmd_use(args, key):
     if args.write_env:
         write_env(uri)
         print(f"\nwritten to .env as {VAR}. Now run:")
-        print("  python3 playwright_scraper.py --mode market-values --pages 1 \\")
-        print("      --out /tmp/tm-cdp --format json")
+        print("  python3 playwright_scraper.py --category mattresses \\")
+        print("      --out /tmp/sn-cdp --format json")
     else:
         print("\nNot written. Add --write-env to put it in .env without the "
               "URI passing through this terminal.")
@@ -352,8 +352,8 @@ def cmd_connection(args, key):
     if args.write_env:
         write_env(uri)
         print(f"\nwritten to .env as {VAR}. Now run:")
-        print("  python3 playwright_scraper.py --mode market-values --pages 1 \\")
-        print("      --out /tmp/tm-cdp --format json")
+        print("  python3 playwright_scraper.py --category mattresses \\")
+        print("      --out /tmp/sn-cdp --format json")
     else:
         print("\nNot written. Re-run with --write-env to put it in .env "
               "without the URI passing through this terminal.")
