@@ -89,6 +89,9 @@ claimed:
 - `diff_runs.py` separates a real price move from a `price_source` change,
   and `--fail-on-change` ignores the latter.
 
+- `SECURITY.md` said this project has no releases or version tags; it has
+  both. "Supported versions" now names the latest release and `main`.
+
 
 ## [0.1.0] — 2026-09-17
 
