@@ -96,8 +96,8 @@ challenged=0
 unreachable=0
 served=0
 for i in $(seq 1 "$N"); do
-  # -L matters: the player and club URLs answer 301 to their canonical slug,
-  # and without it every redirect would be counted as a clean response.
+  # -L matters: a URL that answers 301 (the bare sleepnumber.com host does,
+  # to www.) would otherwise be counted as a clean response.
   code=$(curl -sSL -o "$BODY" -D "$HDR" -w "%{http_code}" "$URL" \
            -H "User-Agent: $UA" --max-time 40 2>/dev/null)
   srv=$(grep -i '^server:' "$HDR" | tr -d '\r' | tail -1 | awk '{print $2}')

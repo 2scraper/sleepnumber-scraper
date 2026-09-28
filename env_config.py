@@ -201,8 +201,9 @@ def _dests_given_on_argv(dests, argv=None):
     spelling of "ignore what the file says" at all.
 
     That matters more here than in the sibling repos: this site's local
-    headful path and its Scraping Browser path are both first-class, and
-    switching between them is routine rather than exceptional.
+    path (through a residential proxy) and its Scraping Browser path are
+    both first-class, and switching between them is routine rather than
+    exceptional.
 
     Scanning argv is the smallest fix that keeps §3's precedence intact --
     explicit flag, then exported variable, then `.env`, then default -- with
