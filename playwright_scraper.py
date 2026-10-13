@@ -964,6 +964,28 @@ def scrape(args) -> int:
     if first_html and args.mode == "listing":
         arithmetic = page_flow.listing_arithmetic(first_html)
 
+    # Did we parse everything the SITE says is there? It counts products
+    # while a row here is a size variant, so the comparison is on distinct
+    # product_id. A shortfall is the response contradicting us, which is a
+    # stronger signal than any coverage threshold — see
+    # page_flow.products_shortfall. Only meaningful for a run that otherwise
+    # finished: a blocked or truncated run is already not complete.
+    if (args.mode == "listing" and first_html
+            and stop_reason in ("completed", "pagination_exhausted",
+                                "no_new_products", "single_page_mode")):
+        missing = page_flow.products_shortfall(
+            first_html, (r.product_id for r in all_rows))
+        if missing:
+            logger.error(
+                "The site says this listing holds %s products; we parsed %d. "
+                "%d missing. That is this parser falling short of what the "
+                "response itself states, not an empty shelf — reporting the "
+                "run as partial rather than complete.",
+                arithmetic.get("total_results"),
+                len({r.product_id for r in all_rows if r.product_id}), missing)
+            stop_reason = "parser_incomplete"
+            arithmetic["products_missing"] = missing
+
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       extra=arithmetic or None,
                       blocked=blocked, stop_reason=stop_reason,
@@ -1006,7 +1028,7 @@ def parse_args():
                         "this site and told why: ?page=N is ignored by the "
                         "server, so workers would fetch page one in parallel. "
                         "See page_flow.CONCURRENCY_CAPABLE_MODES.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3).")
     p.add_argument("--retry-delay", type=float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")

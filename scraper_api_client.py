@@ -61,6 +61,7 @@ from product_parser import (BOT_CHALLENGE_MARKERS, detect_bot_challenge,
                             is_supported_url)
 from output_writer import save
 import env_config
+import page_flow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scraper_api_client")
@@ -231,7 +232,7 @@ def main() -> int:
     # A challenge page is not necessarily final (see _run_once), so a
     # single attempt is not evidence. Each retry is a fresh billable task —
     # $0.0005 at the observed rate — so the default is deliberately low.
-    attempts = max(1, args.retries + 1)
+    attempts = args.retries        # already validated >= 1
     for attempt in range(1, attempts + 1):
         rc = _run_once(args, attempt, attempts)
         if rc == EXIT_REFUSED_DETERMINISTIC:
@@ -379,8 +380,13 @@ def parse_args():
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 products were parsed. Off by "
                         "default so a failed fetch can't overwrite a good result.")
-    p.add_argument("--retries", type=int, default=1,
-                   help="Extra attempts if a bot-challenge page comes back. One retry is "
+    # ATTEMPTS, matching the three engines. It used to mean EXTRA attempts
+    # here and attempts there — one flag with two meanings in one repo, which
+    # is a trap rather than a nuance. The default moves 1 -> 2 so the number
+    # of requests this client actually makes is unchanged.
+    p.add_argument("--retries", type=page_flow.attempts, default=2,
+                   help="Attempts if a bot-challenge page comes back (default 2, "
+                        "i.e. one retry). One retry is "
                         "usually worth it. Each attempt is a separate billable task, so "
                         "this defaults to 1.")
     p.add_argument("--retry-delay", type=int, default=10,

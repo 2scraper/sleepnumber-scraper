@@ -33,7 +33,12 @@ REPO = Path(__file__).resolve().parent.parent
 # need them. An ImportError naming one of these is expected, not a failure.
 ENGINE_LIBS = ("playwright", "pyppeteer", "selenium", "webdriver_manager")
 
+# Every shipped CLI. `http_scraper.py` and `scraper_api_client.py` are
+# entry points too — a missing module breaks `--help` exactly as it does for
+# an engine, and leaving them out meant the check could not see the two
+# paths that need no browser.
 CLIS = ["playwright_scraper.py", "puppeteer_scraper.py", "selenium_scraper.py",
+        "http_scraper.py", "scraper_api_client.py",
         "fingerprint_client.py", "env_config.py"]
 
 SAMPLE_FILES = ("sample_output.json", "sample_output.csv")

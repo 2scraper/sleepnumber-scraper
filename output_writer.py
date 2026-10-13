@@ -473,6 +473,10 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # CloudFront's refusal and an empty category are different facts with
 # different exit codes (§8), and page_flow.STATE_POLICY is what keeps them
 # apart before this tuple is ever consulted.
+# "parser_incomplete" is deliberately ABSENT: the site counted more
+# products than we parsed, so the run did not read what it was asked to read.
+# Through the not-complete rule it reports `partial` (exit 6), which is the
+# honest answer — some rows were gathered and the view is incomplete.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted",
                          "no_new_products", "single_page_mode")
 

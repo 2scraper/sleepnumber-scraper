@@ -11,6 +11,84 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-13
+
+> **Behaviour change:** `--retries 0` is now a usage error (exit 2) in every
+> entry point. It used to be accepted and made the load loop body
+> unreachable, so nothing was fetched and the engine reported the browser's
+> own blank page as a block — exit 3, with a 39-byte "capture", in about 40
+> milliseconds. If a script of yours passes 0, pass 1: the flag counts
+> ATTEMPTS, so 1 means "try once and do not retry".
+>
+> Also: `--retries` on `scraper_api_client.py` used to mean EXTRA attempts
+> while meaning ATTEMPTS everywhere else. It now means attempts there too,
+> and its default moves 1 → 2 so the number of requests actually made is
+> unchanged.
+
+### Added
+
+- **`http_scraper.py` — a fourth entry point that launches no browser.**
+  Sleep Number server-renders its whole catalogue into the page, so there is
+  nothing to wait for and nothing to scroll. Measured 2026-10-13 through one
+  US residential exit, three runs each: **1.4s / 1.3s / 2.1s** against
+  Playwright's 4.2s / 2.9s / 64.2s, and **52 rows whose every field is
+  identical**. It is now the path the README recommends for this site. It
+  deliberately takes no `--headless`, `--cdp-endpoint`, `--fingerprint` or
+  captcha flags, because there is no browser to configure and no challenge
+  has ever been observed here.
+- The canary now runs both transports daily and **asserts they agree field
+  for field** — the family's "every engine agrees" contract under test
+  rather than asserted. Controlled: a one-cent difference turns it red.
+- `http_scraper.py` and `scraper_api_client.py` joined the `--help` check in
+  `ci_checks.py`; neither had been covered.
+- **A run is now checked against the site's own count of products.** The
+  payload states `total_results`; a run that parses fewer distinct products
+  than that reports `partial` (exit 6) with `stop_reason:
+  parser_incomplete` and `products_missing` in the sidecar, instead of exit
+  0 with a quietly short file. Controlled live: a parser made to drop one
+  product returned exit 6, `products_missing: 1`.
+
+  This answers the audit's point about price coverage only warning, and does
+  it with the response rather than a threshold. `total_results` was measured
+  on 2026-10-13 to equal the products in the payload exactly across four
+  categories (7, 10, 20 and 9), so an inequality is our problem.
+
+### Fixed
+
+- **`--retries 0` fetched nothing and called it a block** (see above). An
+  audit ran exactly that command on 2026-10-13 and reported the site as
+  unreachable; its 39-byte evidence was `about:blank`. The site does refuse
+  this address — `--retries 1` gets the real 923-byte CloudFront 403 — so
+  the conclusion was right and the evidence was about our bug.
+- **The canary asserted a sale that has since ended.** It required the three
+  canary categories to disagree about discounting by at least 20 points,
+  from figures measured during a September sale (52 of 52 mattresses
+  discounted). On 13 October the same categories read 0, 11 of 194 and 0,
+  with the parser working perfectly — so the check would have been red every
+  day for a catalogue that simply is not discounted. Removed; the discount
+  column is still guarded by assertions that hold either way (no
+  `original_price` at or below its price, no non-positive discount, 100%
+  price coverage).
+
+- **A test fixture claimed what no response says.** The listing fixture
+  inherited `total_results` from the full capture while its product list was
+  trimmed, so it asserted 7 products while holding 2 — which made a correct
+  parse look like a five-product shortfall the moment anything compared the
+  two. The generator now re-states the total for what it kept, and proves it
+  before writing.
+
+### Documentation
+
+- **The README promised a sidecar "per run" and means "per run that writes
+  rows".** A blocked run deliberately writes neither file: the row file is
+  left holding the last good run, and a `"status": "failed"` sidecar beside
+  it would describe a run that did not produce the data next to it. Now said
+  explicitly, with what a blocked run does leave behind.
+- Re-measured figures rather than inheriting them: the catalogue is **91
+  products across 52 categories** today against 88 and 51 in September, and
+  the sitemap holds 1,962 URLs against 1,994. Both tables now carry two
+  dates and the command that reproduces them.
+
 ### Fixed
 
 - **Scraper API: `waitFor` is now sent as a JSON object.** It went out as a

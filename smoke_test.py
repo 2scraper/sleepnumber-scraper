@@ -646,6 +646,87 @@ def test_page_url_still_builds_the_convention():
 
 
 @check
+def test_a_parser_shortfall_is_measured_against_the_site_own_count():
+    """The site counts PRODUCTS; a row here is a size VARIANT.
+
+    So the comparison is on distinct `product_id`, and getting that wrong
+    would make a healthy 52-row run look like a 45-product shortfall against
+    a stated total of 7. Pinned in both directions.
+
+    This replaces a coverage threshold an audit asked for on 2026-10-13. A
+    threshold is a guess about how much loss is acceptable; `total_results`
+    is the response itself proving the loss.
+    """
+    rows = P.parse_products(LISTING_HTML, LISTING_URL, page=1)
+    ids = [r.product_id for r in rows]
+    # the fixture holds fewer products than the real category, so its own
+    # stated total is what must be matched — never the live one
+    bits = page_flow.pagination(LISTING_HTML)
+    total = bits.get("total_results")
+    assert isinstance(total, int), "the listing fixture states no total_results"
+
+    # a complete read of the fixture's own products reports no shortfall
+    complete = page_flow.products_shortfall(LISTING_HTML, ids)
+    assert complete == 0 or complete is None, (
+        f"a full parse of the fixture reports {complete} missing against "
+        f"total_results={total}; the comparison is probably counting rows "
+        f"instead of distinct products")
+
+    # losing one product is reported as exactly one missing
+    kept = sorted({i for i in ids if i})
+    assert len(kept) >= 2, "fixture has too few products to drop one"
+    short = page_flow.products_shortfall(LISTING_HTML, kept[:-1])
+    assert short == complete + 1, (
+        f"dropping one product changed the shortfall from {complete} to "
+        f"{short}; it should have gone up by exactly one")
+
+    # a page that states no total cannot be contradicted
+    assert page_flow.products_shortfall(LANDING_HTML, []) is None, (
+        "a landing page states no total_results, so there is no claim to "
+        "fall short of — a shortfall there would be invented")
+
+    # THE DISCRIMINATING CASE, and the fixture cannot provide it.
+    #
+    # A row is a size VARIANT, so a listing normally has far more rows than
+    # products — 52 rows for 7 products on the real mattresses category. If
+    # this counted rows instead of distinct products the subtraction would
+    # clamp at zero on every healthy page and the check would NEVER FIRE,
+    # which is the failure that matters and the one a planted fault against
+    # the fixture alone stayed green on (§22: treat a green control as a hole
+    # in the suite, not as a pass).
+    #
+    # So state it directly: three products claimed, three ROWS parsed, but
+    # all three rows belong to ONE product. Two are missing.
+    stub_html = LISTING_HTML
+    stated = page_flow.pagination(stub_html).get("total_results")
+    assert isinstance(stated, int) and stated >= 1
+    # one product id repeated `stated + 2` times: more rows than the total,
+    # and fewer distinct products than it.
+    repeated = ["ONLY-ONE-PRODUCT"] * (stated + 2)
+    got = page_flow.products_shortfall(stub_html, repeated)
+    assert got == stated - 1, (
+        f"with {stated} products claimed and {len(repeated)} rows all from "
+        f"ONE product, the shortfall should be {stated - 1}; got {got}. "
+        f"That is the signature of counting rows instead of distinct "
+        f"products, which makes this check silently never fire.")
+
+
+@check
+def test_parser_incomplete_is_not_a_complete_stop_reason():
+    """It must reach the caller as `partial`, not `complete`.
+
+    Verified live too: a parser made to drop one product returned exit 6
+    with `stop_reason: parser_incomplete` and `products_missing: 1`.
+    """
+    assert "parser_incomplete" not in output_writer.COMPLETE_STOP_REASONS
+    for name in ENGINE_NAMES + ("http_scraper",):
+        text = (ROOT / f"{name}.py").read_text()
+        assert "products_shortfall" in text, (
+            f"{name} never asks whether it parsed what the site counted")
+        assert 'stop_reason = "parser_incomplete"' in text, name
+
+
+@check
 def test_the_site_states_its_own_arithmetic():
     bits = page_flow.listing_arithmetic(LISTING_HTML)
     assert bits["per_page"] == 100, bits
@@ -1349,6 +1430,114 @@ def test_all_engines_describe_a_landing_page_identically():
         assert needle in text, (
             f"{name} does not tell the user that a landing page is not a "
             f"listing — it would report 'zero products' instead")
+
+
+# The browserless entry points. They are NOT in ENGINE_NAMES on purpose:
+# the flag-parity checks compare the three browser engines against each
+# other, and these two deliberately take no --headless, --cdp-endpoint,
+# --fingerprint or captcha flags. See http_scraper.py's docstring for why
+# each omission is honest on this site rather than a gap.
+BROWSERLESS = ("http_scraper", "scraper_api_client")
+
+
+@check
+def test_http_engine_needs_no_browser_driver():
+    """It must import with no playwright, selenium or pyppeteer installed.
+
+    That is the whole point of it, and it is the kind of claim that rots
+    quietly: one `import playwright` added for a type hint and the engine
+    silently requires the thing it exists to avoid.
+    """
+    import ast
+    tree = ast.parse((ROOT / "http_scraper.py").read_text())
+    drivers = {"playwright", "selenium", "pyppeteer"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name.split(".")[0] not in drivers, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] not in drivers, node.module
+    # and it really does import here, where no driver is guaranteed present
+    import http_scraper                      # noqa: F401
+
+
+@check
+def test_http_engine_parses_identically_to_the_browser_engines():
+    """Same HTML in, same rows out.
+
+    Verified live as well (identical on every field of all 52 rows), but
+    pinned offline so a divergence is caught without a network or a key.
+    """
+    import http_scraper
+
+    class _Args:
+        mode = "listing"
+
+    want = P.parse_products(LISTING_HTML, LISTING_URL, page=1)
+    # the HTTP engine calls the shared parser with the same arguments; assert
+    # it does rather than re-implementing the call here
+    src = inspect.getsource(http_scraper._fetch_one_page)
+    assert "parse_products(html, response.url," in src, (
+        "http_scraper does not call the shared parser the way the engines do")
+    assert "page=page_num if args.mode == \"listing\" else None" in src, (
+        "http_scraper threads `page` differently from the browser engines")
+    assert want, "fixture produced no rows"
+
+
+@check
+def test_browserless_entry_points_take_the_data_flags():
+    """They may skip the browser flags; they may not skip the output contract."""
+    # What BOTH must take: the flags that decide what is read and what is
+    # written. Not --proxy: the Scraper API runs the fetch on 2Captcha's own
+    # infrastructure, so a local proxy has nothing to apply to there, and it
+    # takes --cdp-url instead. http_scraper does the fetching itself and
+    # therefore does need one.
+    must_have = {"--url", "--category", "--mode", "--format", "--out",
+                 "--retries", "--allow-empty"}
+    for name in BROWSERLESS:
+        flags = _flags_of(name)
+        missing = must_have - flags
+        assert not missing, f"{name} is missing {sorted(missing)}"
+    http_flags = _flags_of("http_scraper")
+    assert "--proxy" in http_flags, (
+        "http_scraper does its own fetching and must accept an exit")
+    assert "--proxy" not in _flags_of("scraper_api_client"), (
+        "scraper_api_client gained --proxy, which it cannot honour: the "
+        "fetch happens on 2Captcha's infrastructure. It takes --cdp-url.")
+    for browser_only in ("--headless", "--headful", "--cdp-endpoint",
+                         "--fingerprint", "--solve-captcha"):
+        assert browser_only not in http_flags, (
+            f"http_scraper takes {browser_only}, which it cannot honour: it "
+            f"manages no browser. A flag that looks available and does "
+            f"nothing is the shape of bug this family keeps finding.")
+
+
+@check
+def test_retries_is_validated_in_every_entry_point():
+    """§27.9: `--retries 0` makes the load loop body unreachable.
+
+    `for attempt in range(1, args.retries + 1)` with 0 is an empty range, so
+    nothing is fetched and the engine then classifies the browser's own
+    blank page as a block — a fast, confident answer to a question nobody
+    asked. A third-party audit ran exactly that on 2026-10-13 and reported
+    the site unreachable; the 39-byte "evidence" was about:blank.
+
+    Pinned for ALL FOUR entry points, including the two browserless ones,
+    because the flag used to mean something different in one of them.
+    """
+    for name in ENGINE_NAMES + BROWSERLESS:
+        text = (ROOT / f"{name}.py").read_text()
+        assert 'p.add_argument("--retries", type=page_flow.attempts' in text, (
+            f"{name} does not validate --retries through page_flow.attempts, "
+            f"so --retries 0 silently fetches nothing")
+    import argparse as _ap
+    for bad in (0, -1, "x"):
+        try:
+            page_flow.attempts(bad)
+        except _ap.ArgumentTypeError:
+            continue
+        raise AssertionError(f"page_flow.attempts accepted {bad!r}")
+    assert page_flow.attempts(1) == 1 and page_flow.attempts("3") == 3
 
 
 @check

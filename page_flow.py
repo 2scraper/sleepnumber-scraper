@@ -46,6 +46,7 @@ pyppeteer take `() => expr`, so the shared module names the OPERATION and
 each engine passes its own driver's primitive in.
 """
 
+import argparse
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -104,6 +105,47 @@ READY_SELECTORS = {
 MIN_ROW_MATCHES = {"listing": 3, "product": 3}
 
 CONTENT_TIMEOUT_MS = {"listing": 20_000, "product": 20_000}
+
+
+def attempts(value) -> int:
+    """argparse `type=` for --retries. Rejects anything below 1.
+
+    WHY THIS IS A USAGE ERROR AND NOT A CLAMP. Every engine's load loop is
+    `for attempt in range(1, args.retries + 1)`, so `--retries 0` makes the
+    body unreachable: `page.goto` is never called, nothing is fetched, and
+    the engine then classifies the browser's own `about:blank` — 39 bytes of
+    `<html><head></head><body></body></html>`, which `_is_blank_document`
+    correctly calls `blocked`.
+
+    The result is the worst shape this family knows: a confident, fast,
+    plausible answer to a question nobody asked. Measured here 2026-10-13,
+    from an address the site genuinely does refuse, so the conclusion even
+    looked right:
+
+        --retries 0   exit 3, 39 bytes, 36 ms     <- never left the process
+        --retries 1   exit 3, 923 bytes, 116 ms   <- the real CloudFront 403
+
+    36 milliseconds is not a network round trip. A third-party audit ran the
+    first command, read the exit code and the debug dump, and reported the
+    site as unreachable; its conclusion happened to be true of this address
+    and its evidence was entirely about our own bug.
+
+    Clamping to 1 would hide it. A caller who writes `--retries 0` means
+    something — probably "do not retry", which is `--retries 1` here since
+    the flag counts ATTEMPTS — and telling them so costs one line and ends
+    the ambiguity for good.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"--retries must be an integer, not {value!r}")
+    if number < 1:
+        raise argparse.ArgumentTypeError(
+            f"--retries must be at least 1, not {number}. It counts ATTEMPTS, "
+            f"not re-tries, so --retries 1 means 'try once and do not retry'. "
+            f"With 0 the load loop never runs, nothing is fetched, and the "
+            f"engine reports the browser's blank page as a block.")
+    return number
 
 
 def ready_selector(mode: str) -> str:
@@ -314,6 +356,38 @@ def plan_pages(page1_html: str, page1_url: str, want: int) -> List[str]:
         return []
     last = min(want, available) if available else want
     return [page_url(page1_url, n) for n in range(2, last + 1)]
+
+
+def products_shortfall(page1_html: str, product_ids) -> Optional[int]:
+    """How many products the SITE counted that we did not parse, or None.
+
+    The site states `total_results` in its own payload, and it counts
+    PRODUCTS while a row here is a size VARIANT — so the comparison is
+    against distinct `product_id`, never against the row count.
+
+    Why this rather than a coverage threshold. A third-party audit noted on
+    2026-10-13 that low price coverage only logs a warning, so a run can exit
+    0 holding less than it should, and proposed a configurable quality gate.
+    The gate would work, but a threshold is a guess about how much loss is
+    acceptable; this is the response itself proving the loss. CLAUDE.md §26
+    records the same correction on a sibling: a served page inside its own
+    stated total that yields fewer rows is a parser problem, and exit 4
+    ("nothing listed") would claim a fact the response contradicts.
+
+    Measured 2026-10-13 across four categories — mattresses, sheets, furniture
+    and specialty pillows — `total_results` equalled both the products in the
+    payload and the distinct product ids in the parsed rows, 7=7, 10=10,
+    20=20 and 9=9. So an inequality means something went wrong on our side.
+
+    Returns None when the site states no total (a curated landing page has no
+    `total_results` at all — see `_is_landing_page`), because no claim cannot
+    be contradicted.
+    """
+    bits = pagination(page1_html or "")
+    total = bits.get("total_results")
+    if not isinstance(total, int) or total < 0:
+        return None
+    return max(0, total - len({pid for pid in product_ids if pid}))
 
 
 def listing_arithmetic(page1_html: str) -> Dict[str, Any]:

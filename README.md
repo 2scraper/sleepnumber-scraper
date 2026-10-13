@@ -17,10 +17,9 @@ Selenium, and the 2Captcha Scraping Browser API over CDP or the Scraper API
 with no local browser at all.
 
 ```bash
-pip install -r requirements.txt -r requirements-playwright.txt
-playwright install chromium
+pip install -r requirements.txt          # no browser needed on this site
 
-python3 playwright_scraper.py --category mattresses --format both --out mattresses
+python3 http_scraper.py --category mattresses --format both --out mattresses
 ```
 
 ```
@@ -139,16 +138,29 @@ See `sample_output.json` / `sample_output.csv`, both cut from a real run.
 
 ### Measured coverage
 
-Every figure below is from captures taken 2026-09-17 through a US residential
-exit, and reproducible with `python3 tools/capture.py`.
+Every figure below was taken through a US residential exit and is
+reproducible with `python3 tools/capture.py`. Two dates are given where the
+figure moved, because that is more useful than one that looks permanent.
 
-| listing | products | rows (variants) | priced | discounted | rated | sizes |
-|---|---:|---:|---:|---:|---:|---:|
-| `/categories/mattresses` | 7 | 52 | 52 | 52 | 52 | 10 |
-| `/categories/sheets-pillowcases` | 10 | 211 | 211 | 13 | 211 | 13 |
-| `/categories/furniture` | 20 | 169 | 169 | 157 | 169 | 8 |
-| `/collections/mattresses-climate-collection` | 5 | 27 | 27 | 27 | 21 | 7 |
-| `/products/cm-mattress` (detail) | 1 | 7 | 7 | 7 | 7 | 7 |
+| listing | rows (variants) | priced | discounted 2026-09-17 | discounted 2026-10-13 |
+|---|---:|---:|---:|---:|
+| `/categories/mattresses` | 52 | 52 | 52 | **0** |
+| `/categories/sheets-pillowcases` | 211 → 194 | all | 13 | 11 |
+| `/categories/furniture` | 169 | 169 | 157 | **0** |
+| `/products/cm-mattress` (detail) | 7 | 7 | 7 | 0 |
+
+**Two dates, because the second one is the useful lesson.** Price coverage is
+100% on both — every sellable variant publishes a price, which is why the
+engines treat a shortfall as a parsing regression
+(`page_flow.PRICE_COVERAGE_FLOOR`, 0.98). The DISCOUNT column is a property
+of whatever sale is running: in September nearly everything was reduced, and
+on 13 October nothing in mattresses or furniture was. The same ComfortMode
+Twin that read `price 989.10, original_price 1099.00` in September reads
+`price 1499.00, original_price null` today.
+
+So do not build a threshold on the discount share. An earlier version of the
+canary did, and it went red the day the sale ended with the parser working
+perfectly.
 
 **Price coverage is 100% on every listing measured**, which is why the
 engines treat a shortfall as a parsing regression rather than as the
@@ -160,20 +172,30 @@ so `original_price` is a real column and not a constant. `rated` varies too
 
 ### How big is the catalogue?
 
-From the site's own `sitemap.xml.gz`, 2026-09-17: **1,994 URLs, 1,796
-unique** —
+From the site's own `sitemap.xml.gz` — re-measured 2026-10-13, with the
+2026-09-17 figures beside them so you can see how fast this moves:
 
-| path | URLs | unique |
-|---|---:|---:|
-| `/stores/` | 1,140 | 1,137 |
-| `/post/` | 337 | 337 |
-| `/pages/` | 245 | 129 |
-| `/categories/` | 109 | 51 |
-| `/products/` | 88 | 88 |
-| `/bundles/` | 16 | 16 |
+| path | URLs (13 Oct) | unique | unique (17 Sep) |
+|---|---:|---:|---:|
+| `/stores/` | 1,103 | 1,100 | 1,137 |
+| `/post/` | 343 | 343 | 337 |
+| `/pages/` | 240 | 129 | 129 |
+| `/categories/` | 110 | 52 | 51 |
+| `/products/` | 91 | 91 | 88 |
+| `/bundles/` | 16 | 16 | 16 |
 
-So the sellable catalogue is **88 products across 51 distinct categories** —
-small, and a complete pass over it is minutes rather than hours.
+Totals: **1,962 URLs, 1,770 unique** today against 1,994 and 1,796 in
+September.
+
+So the sellable catalogue is **91 products across 52 distinct categories**
+(88 and 51 four weeks earlier) — small, and a complete pass over it is
+minutes rather than hours. Re-measure rather than quoting this:
+
+```bash
+curl -s https://www.sleepnumber.com/sitemap.xml.gz | gunzip \
+  | grep -o '<loc>[^<]*</loc>' | sed 's|.*//[^/]*\(/[^/?#]*\).*|\1|' \
+  | sort | uniq -c | sort -rn | head
+```
 
 ---
 
@@ -335,10 +357,48 @@ cloudfront` with `server: Fly/…`, a refusal `Error from cloudfront` with
 
 | engine | on this site |
 |---|---|
-| **`playwright_scraper.py`** | Recommended. 52 rows, exit 0, complete. |
+| **`http_scraper.py`** | **Recommended. No browser at all** — same rows, about a third of the time. |
+| `playwright_scraper.py` | A real browser, for when one is wanted. 52 rows, exit 0, complete. |
 | `puppeteer_scraper.py` | Works. Byte-identical rows to Playwright on the same URL. |
 | `selenium_scraper.py` | **Cannot authenticate a proxy** — see below. |
 | `scraper_api_client.py` | No local browser. Needs `--cdp-url` here. |
+
+### You probably do not need a browser
+
+Sleep Number server-renders its whole catalogue into the page, so there is
+nothing to wait for and nothing to scroll. `http_scraper.py` fetches with
+`requests`, hands the bytes to the same parser the browser engines use, and
+is the path to reach for on this site.
+
+Measured 2026-10-13 through one US residential exit, three runs each, same
+URL:
+
+| | run 1 | run 2 | run 3 | median |
+|---|---|---|---|---|
+| `http_scraper.py` (fetch + parse) | 1.4s | 1.3s | 2.1s | **1.4s** |
+| `playwright_scraper.py` (whole run) | 4.2s | 2.9s | 64.2s | 4.2s |
+
+Both produce **52 rows whose every field is identical**. The 64-second
+outlier is the rotating proxy gateway rather than the engine, and is left in
+the table because it is the ordinary variance of this setup.
+
+```bash
+python3 http_scraper.py --category mattresses --format both --out mattresses
+```
+
+It deliberately takes no `--headless`, `--cdp-endpoint`, `--fingerprint` or
+captcha flags: there is no browser to configure, no challenge has ever been
+observed on this site, and a fingerprint describes a browser there is none
+of. It keeps the whole output contract — same rows, same exit codes, same
+sidecar, same refusal to overwrite good output.
+
+**It still needs an exit the site serves.** Removing the browser does not
+change the address, and the address is the whole difficulty here.
+
+The browser engines stay because they are the answer if Sleep Number ever
+moves its grid behind client-side rendering, and because `--cdp-endpoint`
+reaches the Scraping Browser's own residential exit without a proxy of your
+own.
 
 ### Selenium's limitation matters more here than elsewhere
 
@@ -424,10 +484,26 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   never replaced with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes:** `0` ok · `1` crash · `2` bad usage · `3` blocked ·
   `4` zero products · `5` remote API error · `6` partial.
-- **`<out>.meta.json`** per run, recording `status`, `stop_reason`, which
-  pages failed by number, and the site's own arithmetic about the result set
-  — `total_results`, `per_page`, `pages_available`, `page_param_honoured` —
-  because "complete" and "exhaustive" are different words.
+- **`<out>.meta.json` beside every run that WRITES ROWS**, recording
+  `status`, `stop_reason`, `transport`, which pages failed by number, and the
+  site's own arithmetic about the result set — `total_results`, `per_page`,
+  `pages_available`, `page_param_honoured` — because "complete" and
+  "exhaustive" are different words.
+
+  **A run that gathers nothing writes neither file, sidecar included**, and
+  that is deliberate rather than an oversight. The row file is left holding
+  the last good run; a `"status": "failed"` sidecar beside it would describe
+  a run that did not produce the data sitting next to it, and a consumer
+  reading the pair would be misled about data that is in fact fine. The
+  blocked run still tells you everything: a non-zero exit code, the reason on
+  stderr, and `<out>_page{N}_debug.html` holding the exact bytes that came
+  back.
+
+  This cost a third-party audit a finding on 2026-10-13 — the README said
+  "per run" and it meant "per run that writes rows". If you want a machine-
+  readable record of attempts including failures, read the exit code and keep
+  your own log; this repo will not put a contradicting file next to good
+  data.
 - **An empty CSV still carries its header.**
 
 ## Diffing two runs

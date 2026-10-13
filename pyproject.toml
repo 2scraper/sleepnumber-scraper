@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleepnumber-scraper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sleep Number scraper: smart-bed and mattress listings, prices and product detail pages."
 readme = "README.md"
 license = "MIT"
@@ -47,6 +47,7 @@ py-modules = [
     "diff_runs",
     "env_config",
     "fingerprint_client",
+    "http_scraper",
     "output_writer",
     "page_flow",
     "playwright_scraper",
