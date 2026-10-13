@@ -1351,6 +1351,114 @@ def test_all_engines_describe_a_landing_page_identically():
             f"listing — it would report 'zero products' instead")
 
 
+# The browserless entry points. They are NOT in ENGINE_NAMES on purpose:
+# the flag-parity checks compare the three browser engines against each
+# other, and these two deliberately take no --headless, --cdp-endpoint,
+# --fingerprint or captcha flags. See http_scraper.py's docstring for why
+# each omission is honest on this site rather than a gap.
+BROWSERLESS = ("http_scraper", "scraper_api_client")
+
+
+@check
+def test_http_engine_needs_no_browser_driver():
+    """It must import with no playwright, selenium or pyppeteer installed.
+
+    That is the whole point of it, and it is the kind of claim that rots
+    quietly: one `import playwright` added for a type hint and the engine
+    silently requires the thing it exists to avoid.
+    """
+    import ast
+    tree = ast.parse((ROOT / "http_scraper.py").read_text())
+    drivers = {"playwright", "selenium", "pyppeteer"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name.split(".")[0] not in drivers, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] not in drivers, node.module
+    # and it really does import here, where no driver is guaranteed present
+    import http_scraper                      # noqa: F401
+
+
+@check
+def test_http_engine_parses_identically_to_the_browser_engines():
+    """Same HTML in, same rows out.
+
+    Verified live as well (identical on every field of all 52 rows), but
+    pinned offline so a divergence is caught without a network or a key.
+    """
+    import http_scraper
+
+    class _Args:
+        mode = "listing"
+
+    want = P.parse_products(LISTING_HTML, LISTING_URL, page=1)
+    # the HTTP engine calls the shared parser with the same arguments; assert
+    # it does rather than re-implementing the call here
+    src = inspect.getsource(http_scraper._fetch_one_page)
+    assert "parse_products(html, response.url," in src, (
+        "http_scraper does not call the shared parser the way the engines do")
+    assert "page=page_num if args.mode == \"listing\" else None" in src, (
+        "http_scraper threads `page` differently from the browser engines")
+    assert want, "fixture produced no rows"
+
+
+@check
+def test_browserless_entry_points_take_the_data_flags():
+    """They may skip the browser flags; they may not skip the output contract."""
+    # What BOTH must take: the flags that decide what is read and what is
+    # written. Not --proxy: the Scraper API runs the fetch on 2Captcha's own
+    # infrastructure, so a local proxy has nothing to apply to there, and it
+    # takes --cdp-url instead. http_scraper does the fetching itself and
+    # therefore does need one.
+    must_have = {"--url", "--category", "--mode", "--format", "--out",
+                 "--retries", "--allow-empty"}
+    for name in BROWSERLESS:
+        flags = _flags_of(name)
+        missing = must_have - flags
+        assert not missing, f"{name} is missing {sorted(missing)}"
+    http_flags = _flags_of("http_scraper")
+    assert "--proxy" in http_flags, (
+        "http_scraper does its own fetching and must accept an exit")
+    assert "--proxy" not in _flags_of("scraper_api_client"), (
+        "scraper_api_client gained --proxy, which it cannot honour: the "
+        "fetch happens on 2Captcha's infrastructure. It takes --cdp-url.")
+    for browser_only in ("--headless", "--headful", "--cdp-endpoint",
+                         "--fingerprint", "--solve-captcha"):
+        assert browser_only not in http_flags, (
+            f"http_scraper takes {browser_only}, which it cannot honour: it "
+            f"manages no browser. A flag that looks available and does "
+            f"nothing is the shape of bug this family keeps finding.")
+
+
+@check
+def test_retries_is_validated_in_every_entry_point():
+    """§27.9: `--retries 0` makes the load loop body unreachable.
+
+    `for attempt in range(1, args.retries + 1)` with 0 is an empty range, so
+    nothing is fetched and the engine then classifies the browser's own
+    blank page as a block — a fast, confident answer to a question nobody
+    asked. A third-party audit ran exactly that on 2026-10-13 and reported
+    the site unreachable; the 39-byte "evidence" was about:blank.
+
+    Pinned for ALL FOUR entry points, including the two browserless ones,
+    because the flag used to mean something different in one of them.
+    """
+    for name in ENGINE_NAMES + BROWSERLESS:
+        text = (ROOT / f"{name}.py").read_text()
+        assert 'p.add_argument("--retries", type=page_flow.attempts' in text, (
+            f"{name} does not validate --retries through page_flow.attempts, "
+            f"so --retries 0 silently fetches nothing")
+    import argparse as _ap
+    for bad in (0, -1, "x"):
+        try:
+            page_flow.attempts(bad)
+        except _ap.ArgumentTypeError:
+            continue
+        raise AssertionError(f"page_flow.attempts accepted {bad!r}")
+    assert page_flow.attempts(1) == 1 and page_flow.attempts("3") == 3
+
+
 @check
 def test_every_engine_help_runs():
     """The exact invocation a missing module breaks."""

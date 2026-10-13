@@ -1006,7 +1006,7 @@ def parse_args():
                         "this site and told why: ?page=N is ignored by the "
                         "server, so workers would fetch page one in parallel. "
                         "See page_flow.CONCURRENCY_CAPABLE_MODES.")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3).")
     p.add_argument("--retry-delay", type=float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")

@@ -46,6 +46,7 @@ pyppeteer take `() => expr`, so the shared module names the OPERATION and
 each engine passes its own driver's primitive in.
 """
 
+import argparse
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -104,6 +105,47 @@ READY_SELECTORS = {
 MIN_ROW_MATCHES = {"listing": 3, "product": 3}
 
 CONTENT_TIMEOUT_MS = {"listing": 20_000, "product": 20_000}
+
+
+def attempts(value) -> int:
+    """argparse `type=` for --retries. Rejects anything below 1.
+
+    WHY THIS IS A USAGE ERROR AND NOT A CLAMP. Every engine's load loop is
+    `for attempt in range(1, args.retries + 1)`, so `--retries 0` makes the
+    body unreachable: `page.goto` is never called, nothing is fetched, and
+    the engine then classifies the browser's own `about:blank` — 39 bytes of
+    `<html><head></head><body></body></html>`, which `_is_blank_document`
+    correctly calls `blocked`.
+
+    The result is the worst shape this family knows: a confident, fast,
+    plausible answer to a question nobody asked. Measured here 2026-10-13,
+    from an address the site genuinely does refuse, so the conclusion even
+    looked right:
+
+        --retries 0   exit 3, 39 bytes, 36 ms     <- never left the process
+        --retries 1   exit 3, 923 bytes, 116 ms   <- the real CloudFront 403
+
+    36 milliseconds is not a network round trip. A third-party audit ran the
+    first command, read the exit code and the debug dump, and reported the
+    site as unreachable; its conclusion happened to be true of this address
+    and its evidence was entirely about our own bug.
+
+    Clamping to 1 would hide it. A caller who writes `--retries 0` means
+    something — probably "do not retry", which is `--retries 1` here since
+    the flag counts ATTEMPTS — and telling them so costs one line and ends
+    the ambiguity for good.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"--retries must be an integer, not {value!r}")
+    if number < 1:
+        raise argparse.ArgumentTypeError(
+            f"--retries must be at least 1, not {number}. It counts ATTEMPTS, "
+            f"not re-tries, so --retries 1 means 'try once and do not retry'. "
+            f"With 0 the load loop never runs, nothing is fetched, and the "
+            f"engine reports the browser's blank page as a block.")
+    return number
 
 
 def ready_selector(mode: str) -> str:
