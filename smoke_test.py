@@ -646,6 +646,87 @@ def test_page_url_still_builds_the_convention():
 
 
 @check
+def test_a_parser_shortfall_is_measured_against_the_site_own_count():
+    """The site counts PRODUCTS; a row here is a size VARIANT.
+
+    So the comparison is on distinct `product_id`, and getting that wrong
+    would make a healthy 52-row run look like a 45-product shortfall against
+    a stated total of 7. Pinned in both directions.
+
+    This replaces a coverage threshold an audit asked for on 2026-10-13. A
+    threshold is a guess about how much loss is acceptable; `total_results`
+    is the response itself proving the loss.
+    """
+    rows = P.parse_products(LISTING_HTML, LISTING_URL, page=1)
+    ids = [r.product_id for r in rows]
+    # the fixture holds fewer products than the real category, so its own
+    # stated total is what must be matched — never the live one
+    bits = page_flow.pagination(LISTING_HTML)
+    total = bits.get("total_results")
+    assert isinstance(total, int), "the listing fixture states no total_results"
+
+    # a complete read of the fixture's own products reports no shortfall
+    complete = page_flow.products_shortfall(LISTING_HTML, ids)
+    assert complete == 0 or complete is None, (
+        f"a full parse of the fixture reports {complete} missing against "
+        f"total_results={total}; the comparison is probably counting rows "
+        f"instead of distinct products")
+
+    # losing one product is reported as exactly one missing
+    kept = sorted({i for i in ids if i})
+    assert len(kept) >= 2, "fixture has too few products to drop one"
+    short = page_flow.products_shortfall(LISTING_HTML, kept[:-1])
+    assert short == complete + 1, (
+        f"dropping one product changed the shortfall from {complete} to "
+        f"{short}; it should have gone up by exactly one")
+
+    # a page that states no total cannot be contradicted
+    assert page_flow.products_shortfall(LANDING_HTML, []) is None, (
+        "a landing page states no total_results, so there is no claim to "
+        "fall short of — a shortfall there would be invented")
+
+    # THE DISCRIMINATING CASE, and the fixture cannot provide it.
+    #
+    # A row is a size VARIANT, so a listing normally has far more rows than
+    # products — 52 rows for 7 products on the real mattresses category. If
+    # this counted rows instead of distinct products the subtraction would
+    # clamp at zero on every healthy page and the check would NEVER FIRE,
+    # which is the failure that matters and the one a planted fault against
+    # the fixture alone stayed green on (§22: treat a green control as a hole
+    # in the suite, not as a pass).
+    #
+    # So state it directly: three products claimed, three ROWS parsed, but
+    # all three rows belong to ONE product. Two are missing.
+    stub_html = LISTING_HTML
+    stated = page_flow.pagination(stub_html).get("total_results")
+    assert isinstance(stated, int) and stated >= 1
+    # one product id repeated `stated + 2` times: more rows than the total,
+    # and fewer distinct products than it.
+    repeated = ["ONLY-ONE-PRODUCT"] * (stated + 2)
+    got = page_flow.products_shortfall(stub_html, repeated)
+    assert got == stated - 1, (
+        f"with {stated} products claimed and {len(repeated)} rows all from "
+        f"ONE product, the shortfall should be {stated - 1}; got {got}. "
+        f"That is the signature of counting rows instead of distinct "
+        f"products, which makes this check silently never fire.")
+
+
+@check
+def test_parser_incomplete_is_not_a_complete_stop_reason():
+    """It must reach the caller as `partial`, not `complete`.
+
+    Verified live too: a parser made to drop one product returned exit 6
+    with `stop_reason: parser_incomplete` and `products_missing: 1`.
+    """
+    assert "parser_incomplete" not in output_writer.COMPLETE_STOP_REASONS
+    for name in ENGINE_NAMES + ("http_scraper",):
+        text = (ROOT / f"{name}.py").read_text()
+        assert "products_shortfall" in text, (
+            f"{name} never asks whether it parsed what the site counted")
+        assert 'stop_reason = "parser_incomplete"' in text, name
+
+
+@check
 def test_the_site_states_its_own_arithmetic():
     bits = page_flow.listing_arithmetic(LISTING_HTML)
     assert bits["per_page"] == 100, bits

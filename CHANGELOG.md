@@ -41,6 +41,17 @@ nobody discovers it from a bill or a broken cron job.
   rather than asserted. Controlled: a one-cent difference turns it red.
 - `http_scraper.py` and `scraper_api_client.py` joined the `--help` check in
   `ci_checks.py`; neither had been covered.
+- **A run is now checked against the site's own count of products.** The
+  payload states `total_results`; a run that parses fewer distinct products
+  than that reports `partial` (exit 6) with `stop_reason:
+  parser_incomplete` and `products_missing` in the sidecar, instead of exit
+  0 with a quietly short file. Controlled live: a parser made to drop one
+  product returned exit 6, `products_missing: 1`.
+
+  This answers the audit's point about price coverage only warning, and does
+  it with the response rather than a threshold. `total_results` was measured
+  on 2026-10-13 to equal the products in the payload exactly across four
+  categories (7, 10, 20 and 9), so an inequality is our problem.
 
 ### Fixed
 
@@ -58,6 +69,13 @@ nobody discovers it from a bill or a broken cron job.
   column is still guarded by assertions that hold either way (no
   `original_price` at or below its price, no non-positive discount, 100%
   price coverage).
+
+- **A test fixture claimed what no response says.** The listing fixture
+  inherited `total_results` from the full capture while its product list was
+  trimmed, so it asserted 7 products while holding 2 — which made a correct
+  parse look like a five-product shortfall the moment anything compared the
+  two. The generator now re-states the total for what it kept, and proves it
+  before writing.
 
 ### Documentation
 

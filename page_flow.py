@@ -358,6 +358,38 @@ def plan_pages(page1_html: str, page1_url: str, want: int) -> List[str]:
     return [page_url(page1_url, n) for n in range(2, last + 1)]
 
 
+def products_shortfall(page1_html: str, product_ids) -> Optional[int]:
+    """How many products the SITE counted that we did not parse, or None.
+
+    The site states `total_results` in its own payload, and it counts
+    PRODUCTS while a row here is a size VARIANT — so the comparison is
+    against distinct `product_id`, never against the row count.
+
+    Why this rather than a coverage threshold. A third-party audit noted on
+    2026-10-13 that low price coverage only logs a warning, so a run can exit
+    0 holding less than it should, and proposed a configurable quality gate.
+    The gate would work, but a threshold is a guess about how much loss is
+    acceptable; this is the response itself proving the loss. CLAUDE.md §26
+    records the same correction on a sibling: a served page inside its own
+    stated total that yields fewer rows is a parser problem, and exit 4
+    ("nothing listed") would claim a fact the response contradicts.
+
+    Measured 2026-10-13 across four categories — mattresses, sheets, furniture
+    and specialty pillows — `total_results` equalled both the products in the
+    payload and the distinct product ids in the parsed rows, 7=7, 10=10,
+    20=20 and 9=9. So an inequality means something went wrong on our side.
+
+    Returns None when the site states no total (a curated landing page has no
+    `total_results` at all — see `_is_landing_page`), because no claim cannot
+    be contradicted.
+    """
+    bits = pagination(page1_html or "")
+    total = bits.get("total_results")
+    if not isinstance(total, int) or total < 0:
+        return None
+    return max(0, total - len({pid for pid in product_ids if pid}))
+
+
 def listing_arithmetic(page1_html: str) -> Dict[str, Any]:
     """What the SITE says about the size of this result set.
 

@@ -346,6 +346,28 @@ def scrape(args) -> int:
         arithmetic = page_flow.listing_arithmetic(first_html)
     arithmetic["transport"] = "http"
 
+    # Did we parse everything the SITE says is there? It counts products
+    # while a row here is a size variant, so the comparison is on distinct
+    # product_id. A shortfall is the response contradicting us, which is a
+    # stronger signal than any coverage threshold — see
+    # page_flow.products_shortfall. Only meaningful for a run that otherwise
+    # finished: a blocked or truncated run is already not complete.
+    if (args.mode == "listing" and first_html
+            and stop_reason in ("completed", "pagination_exhausted",
+                                "no_new_products", "single_page_mode")):
+        missing = page_flow.products_shortfall(
+            first_html, (r.product_id for r in all_rows))
+        if missing:
+            logger.error(
+                "The site says this listing holds %s products; we parsed %d. "
+                "%d missing. That is this parser falling short of what the "
+                "response itself states, not an empty shelf — reporting the "
+                "run as partial rather than complete.",
+                arithmetic.get("total_results"),
+                len({r.product_id for r in all_rows if r.product_id}), missing)
+            stop_reason = "parser_incomplete"
+            arithmetic["products_missing"] = missing
+
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       extra=arithmetic,
                       blocked=blocked, stop_reason=stop_reason,

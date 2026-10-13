@@ -177,10 +177,15 @@ def main(argv=None):
     products, category = pp._catalogue_nodes(data)
     route = next(k for k in data if k.startswith("routes/categories"))
     picked = [_trim_product(p, args.variants) for p in products[:args.products]]
+    # total_results is RE-STATED for the number of products kept, not copied
+    # from the full capture. CLAUDE.md §26: a fixture assembled from a trimmed
+    # capture can claim what no response says — and this one did, asserting 7
+    # products while holding 2, which made a correct parse look like a
+    # five-product shortfall the moment anything compared the two.
     loader = {"root": {}, route: {"category": {
         "name": category.get("name"), "slug": category.get("slug"),
         "page": category.get("page"), "per_page": category.get("per_page"),
-        "total_results": category.get("total_results"),
+        "total_results": len(picked),
         "next_page": category.get("next_page"),
         "prev_page": category.get("prev_page"),
         "last_page": category.get("last_page"),
@@ -190,6 +195,12 @@ def main(argv=None):
     back = pp.loader_data(fixture)
     got, _ = pp._catalogue_nodes(back)
     assert got == picked, "listing fixture does not decode to what it was built from"
+    assert pp.loader_data(fixture) is not None
+    _short = __import__("page_flow").products_shortfall(
+        fixture, [p.get("id") for p in picked])
+    assert _short == 0, (
+        f"the listing fixture states a total its own products do not meet "
+        f"({_short} missing) — it would claim what no response says")
     out["listing_html"] = fixture
 
     # ---- detail, with the site's REAL JSON-LD Product for the cross-check ----
@@ -250,7 +261,7 @@ def main(argv=None):
         sloader = {"root": {}, sroute: {"category": {
             "name": scat.get("name"), "slug": scat.get("slug"),
             "page": 1, "per_page": scat.get("per_page"),
-            "total_results": scat.get("total_results"),
+            "total_results": 1,   # one product kept; see the note above
             "last_page": True, "products": [_trim_product(flat, 6)]}}}
         sfixture = page_html(sloader, title="Sheets | Sleep Number")
         out["undiscounted_html"] = sfixture
