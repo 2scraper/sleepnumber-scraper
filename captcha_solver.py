@@ -101,7 +101,7 @@ class CaptchaChallenge:
     page_url: str = ""
     # AWS WAF only. Its task needs three values that all live together in
     # `window.gokuProps` on the challenge page, plus the two script URLs the
-    # page loads. Unlike Cloudflare Turnstile (§19 of the family notes),
+    # page loads. Unlike Cloudflare Turnstile,
     # nothing has to be intercepted at runtime to get them: AWS WAF prints
     # all of it into the served HTML, so a static read is enough.
     iv: Optional[str] = None
@@ -145,8 +145,8 @@ class CaptchaChallenge:
         cannot tell them apart. `captcha.js` can.
 
         THE MEASUREMENT BEHIND THIS IS A SIBLING'S, NOT THIS SITE'S, and is
-        named as one because a number inherited is not a number measured
-        (CLAUDE.md §13): on www.transfermarkt.com, 2026-09-17,
+        named as one because a number inherited is not a number measured:
+        on www.transfermarkt.com, 2026-09-17,
         challenge-action pages came back with challengeScript present and
         captchaScript absent, and captcha-action pages had both. Sleep Number
         has never been observed serving either.
@@ -157,7 +157,7 @@ class CaptchaChallenge:
     def has_captcha_widget(self) -> bool:
         """Is there a widget on this page for a solver to work on?
 
-        Section 19's rule: "unsolvable" is a property of a PAGE, not of a
+        The rule: "unsolvable" is a property of a PAGE, not of a
         vendor, and it means the page carries no widget. A challenge-action
         page carries none, so sending it to a solver buys a token for a
         puzzle that was never rendered -- measured at $0.00145 a time, since
@@ -928,7 +928,7 @@ solve_recaptcha_v3 = solve_recaptcha
 #     `x-amzn-waf-action` header, no challenge iframe, no `data-sitekey` and
 #     no widget of any kind. There is nothing on that page for any solver, at
 #     any price, to work on — the request never reached Sleep Number. This is
-#     the one case CLAUDE.md §19 says it is honest to call unsolvable, and it
+#     the one case it is honest to call unsolvable, and it
 #     is unsolvable because the PAGE carries no widget, not because of any
 #     limit on what 2Captcha can solve.
 #   * From a residential exit the same URLs answer 200 with the catalogue, no

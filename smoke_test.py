@@ -2,7 +2,7 @@
 """smoke_test.py — the offline suite.
 
 One file of plain functions with inline fixtures, plus the real captures in
-`fixtures_generated.json` (CLAUDE.md §10). No pytest, no conftest, no
+`fixtures_generated.json`. No pytest, no conftest, no
 fixtures directory. `tests/test_smoke.py` wraps this as a single pytest test
 so `pytest` works as an entry point without a second copy of the checks.
 
@@ -24,18 +24,18 @@ actually wrong on THIS site. The ones worth knowing before you edit:
   serves — the base template ships a reCAPTCHA loader. Either one used as a
   block marker reports the whole catalogue as challenged.
   `test_markers_absent_from_a_good_page` counts them so neither can come
-  back (§18).
+  back.
 * The site's own JSON-LD points at `sndotcom.fly.dev`, its Fly origin.
-  Read verbatim, every row links to a dev host (§4's "product URL under
+  Read verbatim, every row links to a dev host (the "product URL under
   offers.url" with a different face).
 * `?page=2` and `?page=99` both return page ONE, HTTP 200. A count-based
-  pagination loop would never terminate (§7).
+  pagination loop would never terminate.
 * `regular` equals `sale` on everything not discounted, so copying it into
-  `original_price` asserts a was-price on every undiscounted row (§4).
+  `original_price` asserts a was-price on every undiscounted row.
 * `review_stats` reports 0 for an unreviewed product, and a 0 written
-  through drags every average a consumer computes (§21).
+  through drags every average a consumer computes.
 * A CloudFront refusal reaches a parser in two encodings — HTTP-client bytes
-  and browser DOM — and the suite pins both (§20).
+  and browser DOM — and the suite pins both.
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ def test_a_row_is_a_variant_not_a_product():
 
 @check
 def test_detail_page_confirms_a_price_against_jsonld():
-    """price_source records WHICH views agreed, and the detail fixture
+    """`price_source` records WHICH views agreed, and the detail fixture
     carries the site's own real JSON-LD Product so this is a real agreement
     and not a synthetic one."""
     rows = P.parse_products(DETAIL_HTML, DETAIL_URL)
@@ -213,7 +213,7 @@ def test_detail_page_confirms_a_price_against_jsonld():
 
 @check
 def test_no_original_price_at_or_below_its_price():
-    """The one-line canary assertion from §4, which costs nothing and catches
+    """The one-line canary assertion, which costs nothing and catches
     the regression forever. `regular` equals `sale` on every undiscounted
     variant, so the guard that nulls it is the difference between a real
     discount column and one that reads 0% on most of the catalogue."""
@@ -239,7 +239,7 @@ def test_an_undiscounted_variant_reports_no_was_price():
 
     This fixture exists because a CONTROL found the gap: with the mattresses
     fixture alone — where 52 of 52 rows are discounted — removing the guard
-    left the suite green, which is §22's "a control that proves nothing".
+    left the suite green, which is a control that proves nothing.
     """
     rows = P.parse_products(UNDISCOUNTED_HTML, SHEETS_URL, page=1)
     assert len(rows) == len(UNDISCOUNTED_EXPECTED)
@@ -401,7 +401,7 @@ def test_a_malformed_chunk_does_not_lose_the_others():
 @check
 def test_jsonld_legal_but_hostile_shapes():
     """Every one of these is valid schema.org. Three of them crashed or
-    silently lost data in a sibling repo (CLAUDE.md §4)."""
+    silently lost data in a sibling repo."""
     cases = {
         "offers explicitly null":
             '{"@type":"Product","sku":"A1","offers":null}',
@@ -457,7 +457,7 @@ def test_itemlist_entries_are_read():
 
 
 # ===========================================================================
-# 4. block detection — §18's counts, pinned
+# 4. block detection — the counts, pinned
 # ===========================================================================
 # The real CloudFront refusal, verbatim as an HTTP client receives it. 919
 # bytes on the wire; the boilerplate is trimmed here but every marker-bearing
@@ -474,7 +474,7 @@ CLOUDFRONT_403 = (
     'Request ID: luzGWV_pKUblXiucGzGBVujjh79Sox9aX1vtiPSVJAVqV2KoSalsGg==\n'
     '</PRE>\n<ADDRESS>\n</ADDRESS>\n</BODY></HTML>')
 
-# The SAME refusal after a browser has parsed and re-serialised it. §20: a
+# The SAME refusal after a browser has parsed and re-serialised it. A
 # marker must survive both encodings, and a literal that matches one can
 # silently miss the other.
 CLOUDFRONT_403_DOM = CLOUDFRONT_403.replace("<HTML>", "<html>").replace(
@@ -510,7 +510,8 @@ def test_headers_alone_can_settle_it():
 
 @check
 def test_markers_absent_from_a_good_page():
-    """§18, and the reason this repo's marker list is two entries long.
+    """Count a marker on a known-good page first — the reason this repo's
+    marker list is two entries long.
 
     A marker that matches a page the site actually served is worse than no
     marker at all. `recaptcha` and `captcha` are the live trap here: the base
@@ -549,7 +550,7 @@ def test_the_positive_asset_signal_discriminates():
 def test_chromium_network_error_page_is_not_content():
     """Not an interstitial — the BROWSER's own error page. It carries the
     site's hostname in its title, so a title check calls it a real page
-    (tokopedia-scraper, §18)."""
+    (seen on a sibling site)."""
     html = ("<html><head><title>www.sleepnumber.com</title></head><body>"
             "<div id='main-message'>This site can&rsquo;t be reached</div>"
             "<div class='error-code'>ERR_PROXY_CONNECTION_FAILED</div>"
@@ -568,7 +569,7 @@ def test_the_sites_own_404_is_not_a_block():
     404 was recognised only through its status code — a capture handed to the
     parser without one came out as `empty`, a claim about the catalogue.
 
-    §21: a guard is only as good as the fixture it runs against, and the
+    A guard is only as good as the fixture it runs against, and the
     fixture that matters is the one fetched the way a real run fetches.
     """
     # WITHOUT a status code, which is the case the invented fixture hid.
@@ -692,7 +693,7 @@ def test_a_parser_shortfall_is_measured_against_the_site_own_count():
     # this counted rows instead of distinct products the subtraction would
     # clamp at zero on every healthy page and the check would NEVER FIRE,
     # which is the failure that matters and the one a planted fault against
-    # the fixture alone stayed green on (§22: treat a green control as a hole
+    # the fixture alone stayed green on (treat a green control as a hole
     # in the suite, not as a pass).
     #
     # So state it directly: three products claimed, three ROWS parsed, but
@@ -771,7 +772,7 @@ def test_state_policy_is_total_and_consistent():
 @check
 def test_a_served_page_that_parses_to_nothing_is_our_bug():
     """"0 products" sends the reader to check the URL; "the parser failed"
-    sends them to the parser. They are different facts (§20)."""
+    sends them to the parser. They are different facts."""
     html = ('<html><body><a href="/collections/mattresses-climate-collection/QT8">x</a>'
             '</body></html>')
     assert page_flow.is_broken_parse("content", html, 0) is True
@@ -783,7 +784,7 @@ def test_a_served_page_that_parses_to_nothing_is_our_bug():
 
 @check
 def test_classify_takes_status_as_a_keyword():
-    """farfetch-scraper shipped `classify(html, status, url)` positionally
+    """A sibling shipped `classify(html, status, url)` positionally
     while two engines called it `classify(html, url=…)`, and both crashed on
     their FIRST fetch. Keyword-only makes that impossible to do silently."""
     sig = inspect.signature(page_flow.classify)
@@ -887,7 +888,7 @@ _PY_FILES = sorted(p for p in _shipped_files({".py"}))
 
 @check
 def test_no_unreachable_statement_after_a_terminator():
-    """§22: a statement after return/raise/break/continue in the SAME block.
+    """A statement after return/raise/break/continue in the SAME block.
 
     Found the identical fifteen lines in SIX repos of this family, byte for
     byte, present since each one's first commit: a function whose `def` line
@@ -918,7 +919,7 @@ def test_no_unreachable_statement_after_a_terminator():
 
 @check
 def test_no_undefined_names():
-    """§10: `compileall` proves a file PARSES, not that its names RESOLVE.
+    """`compileall` proves a file PARSES, not that its names RESOLVE.
 
     A live run of a sibling's pyppeteer engine died with NameError on a line
     reached only while fetching, after an import was removed. The module
@@ -975,7 +976,7 @@ def test_no_undefined_names():
 
 @check
 def test_every_shared_call_binds_against_the_real_signature():
-    """§17's check #1, with §22's correction.
+    """Bind every shared call against the real signature, with a correction.
 
     It earns its keep: a sibling shipped `classify(html, status, url)` while
     two of three engines called it `classify(html, url=…)`, and BOTH crashed
@@ -983,7 +984,7 @@ def test_every_shared_call_binds_against_the_real_signature():
     undefined-name walk above and four hundred green assertions, because none
     of those calls a function the way a live run does.
 
-    §22's correction is the important part: resolving the callee with
+    The correction is the important part: resolving the callee with
     `getattr(owner, attr, None)` and skipping anything not callable means a
     name the shared module DOES NOT DEFINE comes back None, is not callable,
     and is silently skipped — the single loudest thing this check could say
@@ -1049,7 +1050,7 @@ def test_every_shared_call_binds_against_the_real_signature():
 
 @check
 def test_every_policy_constant_has_a_consumer():
-    """§17: a policy constant nothing reads is the same defect as dead code,
+    """A policy constant nothing reads is the same defect as dead code,
     and harder to see, because the prose beside it reads like enforcement.
 
     A sibling's `RETRY_ON_BLOCKED` carried a paragraph of measured
@@ -1083,7 +1084,7 @@ def test_every_policy_constant_has_a_consumer():
 # ===========================================================================
 @check
 def test_banned_wording_absent():
-    """§12. The phrases are ASSEMBLED from pieces rather than written out, so
+    """The phrases are ASSEMBLED from pieces rather than written out, so
     this check can scan smoke_test.py ITSELF.
 
     Three repos in this family exempted their own suite file wholesale — the
@@ -1103,7 +1104,7 @@ def test_banned_wording_absent():
         for phrase in banned:
             assert phrase not in text, (
                 f"{path.relative_to(ROOT)} contains a banned phrase. Write "
-                f"'Scraping Browser API' instead (CLAUDE.md §12).")
+                f"'Scraping Browser API' instead.")
 
 
 @check
@@ -1121,7 +1122,9 @@ def test_env_example_documents_exactly_what_the_code_reads():
     """Equal in BOTH directions. A documented-but-unread variable is worse
     than an undocumented one: it looks configurable and is inert."""
     example = (ROOT / ".env.example").read_text()
-    documented = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", example, re.M))
+    # A variable shipped COMMENTED OUT (`# SLEEPNUMBER_URL=…`) is still
+    # documented: it is commented so that a copied example sets nothing.
+    documented = set(re.findall(r"^(?:# )?([A-Z][A-Z0-9_]*)=", example, re.M))
     read = set(env_config.ENV_KEYS)
     assert documented == read, (
         f"documented but never read: {sorted(documented - read)}; "
@@ -1130,7 +1133,7 @@ def test_env_example_documents_exactly_what_the_code_reads():
 
 @check
 def test_a_copied_env_example_reads_as_unset():
-    """§17: `cp .env.example .env` then a run must NOT send `{login}-zone-…`
+    """`cp .env.example .env` then a run must NOT send `{login}-zone-…`
     to the API as if it were a credential.
 
     The two credentialled URLs are documented the way the vendor documents
@@ -1163,7 +1166,7 @@ def test_a_copied_env_example_reads_as_unset():
 
 @check
 def test_env_keys_are_not_mapped_onto_flags_with_defaults():
-    """§3: the loader only fills UNSET values, so a variable mapped onto a
+    """The loader only fills UNSET values, so a variable mapped onto a
     flag with a non-empty default is silently inert — a setting that looks
     configurable and is not."""
     assert "SLEEPNUMBER_OUT" not in env_config.ENV_KEYS, (
@@ -1176,7 +1179,7 @@ def test_no_credentials_committed():
     """The repo's own scan, invoked from here as well as from CI — one
     implementation, two callers.
 
-    §17: this family shipped TWO sources of truth for this, one dead (a
+    This family shipped TWO sources of truth for this, one dead (a
     `ci_checks.py` nothing ran) and one holed (an inline grep matching only
     ws:// and wss://, so an `http://user:pass@` credential sailed past).
     """
@@ -1196,7 +1199,7 @@ def test_no_credentials_committed():
 
 @check
 def test_ci_calls_the_script_rather_than_reimplementing_it():
-    """§17: two sources of truth, one dead and one holed. The workflow must
+    """Two sources of truth, one dead and one holed. The workflow must
     INVOKE ci_checks.py, not grep for credentials itself."""
     wf = ROOT / ".github" / "workflows" / "tests.yml"
     if not wf.exists():
@@ -1210,7 +1213,7 @@ def test_ci_calls_the_script_rather_than_reimplementing_it():
 
 @check
 def test_dockerfile_copies_every_module_the_entrypoint_imports():
-    """§10/§11: three repos in this family shipped an image that died with
+    """Three repos in this family shipped an image that died with
     ModuleNotFoundError on EVERY invocation, `--help` included, because one
     module the engine imports at module level was missing from the COPY list.
     Nothing built the image, so nothing noticed. This needs no Docker."""
@@ -1220,7 +1223,7 @@ def test_dockerfile_copies_every_module_the_entrypoint_imports():
     # Join backslash continuations FIRST. Read line by line, a COPY whose
     # file list wraps — which every readable one does — loses everything
     # after the first line, and the check then reports the modules on the
-    # continuation as missing. That is the §22 question asked of this check
+    # continuation as missing. That is the "what happens when it resolves nothing" question asked of this check
     # itself: when it parses something before testing it, what does it do
     # when the parse comes up short? Here it cried wolf; the same blind spot
     # would have let a genuinely missing module through had the COPY been
@@ -1280,7 +1283,7 @@ def test_sample_output_matches_the_row_schema():
 # ===========================================================================
 # 11. the engines — flags, imports, agreement
 # ===========================================================================
-# Flags every engine must take. §9's contract plus the five this family's own
+# Flags every engine must take: the contract plus the five this family's own
 # list omitted for months while nearly every repo shipped them.
 CONTRACT_FLAGS = {
     "--url", "--pages", "--category", "--format", "--out", "--delay",
@@ -1292,7 +1295,7 @@ CONTRACT_FLAGS = {
 }
 
 # Flags the README documents as belonging to ONE engine. The exception list
-# IS the documentation: §20's lesson is that this check must fail in BOTH
+# IS the documentation: the lesson is that this check must fail in BOTH
 # directions, so closing a documented difference is a failure too.
 ENGINE_ONLY_FLAGS = {
     # Nothing. Every flag the primary engine takes, its twins take too.
@@ -1320,7 +1323,7 @@ def test_every_engine_takes_the_contract_flags():
 
 @check
 def test_engine_flag_sets_agree_in_both_directions():
-    """§20: written only after it was skipped once and then found TWELVE
+    """Written only after it was skipped once and then found TWELVE
     flags the primary engine had and its twins did not — nine of them
     predating the work, while the README promised "same CLI".
 
@@ -1352,7 +1355,7 @@ def test_removed_flags_stay_removed():
 
 @check
 def test_engines_import_their_driver_at_module_level():
-    """§10: for "the suite passes with no engine installed" to MEAN anything,
+    """For "the suite passes with no engine installed" to MEAN anything,
     each engine must import its driver at MODULE level.
 
     A sibling imported `launch`/`connect` inside the launch path, so the
@@ -1514,7 +1517,7 @@ def test_browserless_entry_points_take_the_data_flags():
 
 @check
 def test_retries_is_validated_in_every_entry_point():
-    """§27.9: `--retries 0` makes the load loop body unreachable.
+    """`--retries 0` makes the load loop body unreachable.
 
     `for attempt in range(1, args.retries + 1)` with 0 is an empty range, so
     nothing is fetched and the engine then classifies the browser's own
@@ -1563,7 +1566,7 @@ def test_engines_refuse_concurrency_with_a_reason():
 
 @check
 def test_proxy_credentials_never_reach_argv_or_a_log():
-    """§8, and an EXCEPTION MESSAGE is a log. Masking must be GLOBAL: a
+    """An EXCEPTION MESSAGE is a log. Masking must be GLOBAL: a
     masker that handles the first occurrence prints the password the other
     four times and looks like it is working."""
     # Built by CONCATENATION on purpose: no line of this file may hold a
@@ -1663,6 +1666,358 @@ def test_scraper_api_waitfor_is_an_object():
     assert isinstance(status, int) and status == 403, (
         "Scraper API: the status handed onward must be the target's "
         "http_code (403, an int), not the API's verdict 'success'; got %r" % (status,))
+
+
+# ===========================================================================
+# 12. output contract, paid-solve budget, credential scan, CLI precedence
+# ===========================================================================
+import types as _types  # noqa: E402
+
+
+def _sample_rows():
+    return [Product(sku="QCM10", title="=HYPERLINK(\"http://x\",\"y\")",
+                    url="@x", brand="-5", price=-5.0, currency="USD",
+                    promo_badge="+1 free", size="Queen")]
+
+
+@check
+def test_output_writes_are_atomic_and_keep_modes():
+    """A write that fails halfway must leave the previous file intact.
+
+    `open(path, "w")` truncates before the first byte, so a failure inside
+    `json.dump` used to turn a good `out.json` into a few bytes of invalid
+    JSON, and the sidecar likewise. Reproduced 2026-10-14 (559 -> 13 bytes).
+    New files take `0o666 & ~umask`, exactly as `open()` would; an existing
+    file keeps its own mode.
+    """
+    import output_writer as ow
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out")
+        good = [Product(sku="A1", title="t", price=1.0)]
+        rc = ow.finish_run(good, out, "both", False, blocked=False,
+                           stop_reason="completed", pages_requested=1,
+                           pages_completed=1, start_url="u", final_url="u")
+        assert rc == 0, rc
+        before = {n: pathlib.Path(d, n).read_bytes() for n in os.listdir(d)}
+        real_dump = ow.json.dump
+
+        def failing_dump(obj, f, **kw):
+            f.write("[{\"partial\":")
+            raise OSError("disk full (planted)")
+        ow.json.dump = failing_dump
+        try:
+            for fn, args in ((ow.write_json, (good, out + ".json")),
+                             (ow.write_run_meta, (out, {"status": "x"}))):
+                try:
+                    fn(*args)
+                except OSError:
+                    pass
+                else:
+                    raise AssertionError(f"{fn.__name__} swallowed the failure")
+        finally:
+            ow.json.dump = real_dump
+        after = {n: pathlib.Path(d, n).read_bytes() for n in os.listdir(d)}
+        assert after == before, (
+            "a failed write changed the files on disk (truncated, or left a "
+            f"temp file behind): {sorted(set(after) ^ set(before)) or 'contents differ'}")
+
+        # Modes: a NON-default umask is the case that tells candidate rules
+        # apart, so 002 and 077 are tested beside 022.
+        for umask, want in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+            path = os.path.join(d, f"m{umask:o}.json")
+            old = os.umask(umask)
+            try:
+                ow.write_json(good, path)
+            finally:
+                os.umask(old)
+            got = os.stat(path).st_mode & 0o777
+            assert got == want, f"umask {umask:o}: new file is {got:o}, want {want:o}"
+        kept = os.path.join(d, "kept.json")
+        ow.write_json(good, kept)
+        os.chmod(kept, 0o640)
+        ow.write_json(good, kept)
+        assert os.stat(kept).st_mode & 0o777 == 0o640, "an existing file's mode was not kept"
+
+
+@check
+def test_csv_formula_cells_are_escaped_in_csv_only():
+    """Strings starting with = + - @ TAB CR LF get a leading apostrophe in the
+    CSV only. Numbers stay numbers (a -5.0 price must remain summable), the
+    JSON keeps the site's bytes, and the sidecar declares the count —
+    merged UNDER the caller's extra so a collision never drops site data."""
+    import csv as _csv
+    import output_writer as ow
+    rows = _sample_rows()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out")
+        ow.finish_run(rows, out, "both", False, blocked=False,
+                      stop_reason="completed", pages_requested=1,
+                      pages_completed=1, start_url="u", final_url="u")
+        with open(out + ".csv", newline="", encoding="utf-8") as f:
+            row = next(_csv.DictReader(f))
+        assert row["title"].startswith("'="), row["title"]
+        assert row["url"] == "'@x", row["url"]
+        assert row["brand"] == "'-5", row["brand"]
+        assert row["promo_badge"] == "'+1 free", row["promo_badge"]
+        assert row["price"] == "-5.0", f"a number was escaped: {row['price']!r}"
+        data = json.loads(pathlib.Path(out + ".json").read_text())
+        assert data[0]["title"].startswith("=") and data[0]["url"] == "@x", (
+            "the JSON output was escaped too; it must keep the site's bytes")
+        meta = json.loads(pathlib.Path(out + ".meta.json").read_text())
+        assert meta.get("csv_cells_escaped") == 4, meta.get("csv_cells_escaped")
+
+        out2 = os.path.join(d, "out2")
+        ow.finish_run(rows, out2, "csv", False, blocked=False,
+                      stop_reason="completed", pages_requested=1,
+                      pages_completed=1, start_url="u", final_url="u",
+                      extra={"csv_cells_escaped": "caller"})
+        meta2 = json.loads(pathlib.Path(out2 + ".meta.json").read_text())
+        assert meta2["csv_cells_escaped"] == "caller", (
+            "the write statistic overrode the caller's own extra field")
+    # A list cell is escaped AFTER it is joined into text.
+    val, esc = ow._csv_escape(ow._csv_value(["=a", "b"]))
+    assert esc and val.startswith("'="), val
+
+
+def _function_source(text, name):
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.get_source_segment(text, node)
+    return None
+
+
+@check
+def test_solve_budget_is_one_purchase_per_page_in_every_engine():
+    """The solver used to run once per block attempt, so a page fetched
+    through a 3-exit pool could buy 3 solves (reproduced 2026-10-14 with the
+    solver stubbed). Read off DISK, not through an import, so the check runs
+    for every engine whatever drivers this venv holds."""
+    b = page_flow.SolveBudget(page_flow.SOLVES_PER_PAGE)
+    assert page_flow.SOLVES_PER_PAGE == 1
+    assert [b.claim() for _ in range(3)] == [True, False, False]
+    for name in ENGINE_NAMES:
+        text = (ROOT / f"{name}.py").read_text()
+        handler = _function_source(text, "handle_captcha_if_present")
+        fetch = _function_source(text, "_fetch_one_page")
+        assert handler and fetch, f"{name}: a function this check reads is gone"
+        assert "budget=None" in handler, f"{name}: the handler takes no budget"
+        claim, buy = handler.find(".claim()"), handler.find("solve_recaptcha(")
+        assert 0 <= claim < buy, (
+            f"{name}: the allowance is not checked before the paid request")
+        made, loop = fetch.find("SolveBudget("), fetch.find("for block_attempt")
+        assert 0 <= made < loop, (
+            f"{name}: the page's allowance is not created once, outside the "
+            f"retry/rotation loop")
+        calls = re.findall(r"handle_captcha_if_present\((.*?)\)\s*:", fetch, re.S)
+        assert calls and all("budget=budget" in c for c in calls), (
+            f"{name}: a solve call site does not pass the page's budget")
+
+
+class _Challenge:
+    is_aws_waf = True
+    has_captcha_widget = True
+    kind = "AWS WAF"
+    source = "stub"
+    sitekey = "stub"
+    aws_waf_action = "captcha"
+
+
+def _drive_handler(mod, name):
+    """Call the engine's real handler 3 times against one budget, with the
+    detector and the solver stubbed. Returns the number of solver calls."""
+    bought = []
+
+    def stub_solver(*a, **k):
+        bought.append(1)
+        raise RuntimeError("stub solver: never reaches the network")
+    saved = {}
+    url = "https://www.sleepnumber.com/categories/mattresses"
+    patches = {"solve_recaptcha": stub_solver,
+               "detect_aws_waf": lambda html, u: _Challenge()}
+    if name == "playwright_scraper":
+        patches["_content_when_settled"] = lambda page, *a, **k: "<html></html>"
+        patches["wait_for_autosolve"] = lambda page, sel: False
+        target = _types.SimpleNamespace(url=url, query_selector_all=lambda s: [])
+    elif name == "puppeteer_scraper":
+        patches["_driver"] = lambda s: {"content": lambda: "<html></html>"}
+        page = _types.SimpleNamespace(url=url, querySelectorAll=lambda s: [])
+        target = _types.SimpleNamespace(page=page, bridge=_types.SimpleNamespace(run=lambda x: x))
+    else:
+        patches["_driver"] = lambda s: {"content": lambda: "<html></html>",
+                                        "count": lambda s: 0,
+                                        "current_url": lambda: url}
+        target = _types.SimpleNamespace(driver=None)
+    for k, v in patches.items():
+        saved[k] = getattr(mod, k)
+        setattr(mod, k, v)
+    try:
+        args = _types.SimpleNamespace(solve_captcha="when-blocked",
+                                      twocaptcha_key="stub-not-a-key",
+                                      captcha_api="v2", min_score=0.7)
+        budget = page_flow.SolveBudget(page_flow.SOLVES_PER_PAGE)
+        for _ in range(3):
+            mod.handle_captcha_if_present(target, args, "a", proxy=None,
+                                          budget=budget)
+    finally:
+        for k, v in saved.items():
+            setattr(mod, k, v)
+    return len(bought)
+
+
+@check
+def test_solve_budget_holds_when_the_handler_really_runs():
+    """Behavioural half of the check above, per engine that imports here."""
+    ran = 0
+    for name, mod in ENGINE_MODS.items():
+        if mod is None:
+            continue
+        ran += 1
+        n = _drive_handler(mod, name)
+        assert n == page_flow.SOLVES_PER_PAGE, (
+            f"{name}: {n} solver call(s) against one page's allowance of "
+            f"{page_flow.SOLVES_PER_PAGE}")
+    if not ran:
+        skip("solve-budget behaviour", "no engine driver installed in this venv")
+
+
+@check
+def test_pyppeteer_hands_the_status_to_the_classifier():
+    """The Response from `goto` used to be discarded, so the classifier saw
+    no status or headers in this engine while its Playwright twin did."""
+    text = (ROOT / "puppeteer_scraper.py").read_text()
+    fetch = _function_source(text, "_fetch_one_page")
+    assert "response = bridge.run(page.goto(" in fetch
+    assert re.search(r"page_flow\.classify\(html, status=resp_status", fetch), (
+        "puppeteer_scraper: classify is called without the HTTP status")
+
+
+@check
+def test_a_typed_category_beats_an_environment_url():
+    """`SLEEPNUMBER_URL` in the environment used to replace a typed
+    `--category` silently: the loader filled `args.url`, and the builder ran
+    only `if not args.url`. Reproduced 2026-10-14 in two engines."""
+    import argparse as _ap
+
+    class _P(_ap.ArgumentParser):
+        def error(self, message):
+            raise ValueError(message)
+    env_url = "https://www.sleepnumber.com/categories/mattresses"
+    ns = _types.SimpleNamespace
+    a = ns(url=env_url, category="furniture", mode="listing")
+    page_flow.resolve_start_url(_P(), a, typed_url=None)
+    assert a.url.endswith("/categories/furniture"), a.url
+    a = ns(url=env_url, category=None, mode="listing")
+    page_flow.resolve_start_url(_P(), a, typed_url=None)
+    assert a.url == env_url, a.url
+    a = ns(url=env_url, category="furniture", mode="listing")
+    try:
+        page_flow.resolve_start_url(_P(), a, typed_url=env_url)
+    except ValueError as e:
+        assert "--url" in str(e) and "--category" in str(e), e
+    else:
+        raise AssertionError("--url and --category both typed was accepted")
+    a = ns(url=None, category=None, mode="product")
+    try:
+        page_flow.resolve_start_url(_P(), a, typed_url=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("--mode product with nothing to read was accepted")
+    for name in ENGINE_NAMES + ("http_scraper",):
+        text = (ROOT / f"{name}.py").read_text()
+        cap, apply_ = text.find("typed_url = args.url"), text.find("env_config.apply(args)")
+        assert 0 <= cap < apply_, f"{name}: the typed URL is not captured before env_config.apply"
+        assert "page_flow.resolve_start_url(p, args, typed_url)" in text, (
+            f"{name}: does not resolve the start URL through page_flow")
+
+
+@check
+def test_numeric_flags_reject_negative_values():
+    """A negative --delay reaches time.sleep and raises mid-run; --pages 0
+    or --concurrency 0 asks for nothing. Rejected at parse time, by name."""
+    import argparse as _ap
+    for fn, bad in ((page_flow.positive_int, ("0", "-1", "x")),
+                    (page_flow.non_negative_int, ("-1", "x")),
+                    (page_flow.non_negative_float, ("-0.5", "x", "nan"))):
+        for v in bad:
+            try:
+                fn(v)
+            except _ap.ArgumentTypeError:
+                continue
+            raise AssertionError(f"{fn.__name__} accepted {v!r}")
+    assert page_flow.non_negative_int("0") == 0 and page_flow.non_negative_float("0") == 0
+    want = {'"--pages"': "page_flow.positive_int",
+            '"--concurrency"': "page_flow.positive_int",
+            '"--delay"': "page_flow.non_negative_float",
+            '"--retry-delay"': "page_flow.non_negative_float",
+            '"--proxy-block-retries"': "page_flow.non_negative_int"}
+    for name in ENGINE_NAMES + BROWSERLESS:
+        text = (ROOT / f"{name}.py").read_text()
+        for flag, validator in want.items():
+            m = re.search(r"p\.add_argument\(" + re.escape(flag) + r",\s*type=([\w.]+)", text)
+            if m:
+                assert m.group(1) == validator, (
+                    f"{name} {flag} uses type={m.group(1)}, not {validator}")
+
+
+def _scan_copy(dest, plant=None):
+    """Copy the repo into `dest` and run its own credential scan there."""
+    import shutil
+    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns(
+        ".git", "__pycache__", ".pytest_cache"))
+    if plant:
+        rel, content = plant
+        pathlib.Path(dest, rel).write_text(content)
+    return subprocess.run(
+        [sys.executable, str(pathlib.Path(dest, ".github", "ci_checks.py")),
+         "--secret-check"], capture_output=True, text=True, timeout=180,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+
+
+@check
+def test_credential_scan_reads_backups_and_json_and_any_parent_dir():
+    """Three holes, each reproduced 2026-10-14: a clone under a directory
+    called `venv/` scanned 0 files and printed the clean line (exclusions
+    tested the ABSOLUTE path), and a key in an untracked `.env.bak` or a
+    JSON capture was never read."""
+    if not (ROOT / ".github" / "ci_checks.py").exists():
+        assert not (ROOT / ".github").exists(), ".github/ exists but ci_checks.py is missing"
+        return
+    key = "ab" * 16          # assembled, so this file carries no 32-hex literal
+    with tempfile.TemporaryDirectory() as d:
+        r = _scan_copy(os.path.join(d, "venv", "clone"))
+        assert r.returncode == 0, r.stdout + r.stderr
+        m = re.search(r"ok\s+(\d+) files scanned", r.stdout)
+        assert m and int(m.group(1)) > 10, (
+            f"a clone under venv/ scanned too little: {r.stdout.strip()!r}")
+    for rel, content in ((".env.bak", f"TWOCAPTCHA_KEY={key}\n"),
+                         ("capture_dump.json", json.dumps({"apiKey": key}))):
+        with tempfile.TemporaryDirectory() as d:
+            r = _scan_copy(os.path.join(d, "clone"), (rel, content))
+            assert r.returncode != 0 and rel in r.stdout, (
+                f"a key planted in {rel} was not caught:\n{r.stdout}")
+
+
+@check
+def test_no_private_citations_in_shipped_files():
+    """This repo's public files must state their rules in their own words.
+    Citations of a private instructions file, or bare section numbers into
+    it, point readers at a document they cannot open. The tokens are
+    assembled from pieces so this check can scan its own file."""
+    banned = ("CLAUDE" + ".md", "claude_" + "2scraper", "2scraper_" + "repo_rules",
+              "play" + "book " + chr(0xA7), "template " + chr(0xA7), chr(0xA7))
+    files = list(_shipped_files({".py", ".md", ".yml", ".yaml", ".txt",
+                                 ".toml", ".sh", ".example", ".cfg"}))
+    files += [ROOT / n for n in (".gitignore", ".dockerignore", "Dockerfile")
+              if (ROOT / n).exists()]
+    assert len(files) > 20, f"scanned only {len(files)} files"
+    hits = []
+    for path in files:
+        for i, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            if any(t in line for t in banned):
+                hits.append(f"{path.relative_to(ROOT)}:{i}")
+    assert not hits, f"private citations in shipped files: {hits[:10]}"
 
 
 def main() -> int:

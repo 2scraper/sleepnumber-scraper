@@ -272,7 +272,7 @@ def _next_page_href(session) -> Optional[str]:
 
 
 def handle_captcha_if_present(session, args, ready_selector: str,
-                              proxy=None) -> bool:
+                              proxy=None, budget=None) -> bool:
     driver = session.driver
     d = _driver(session)
     html = d["content"]()
@@ -282,9 +282,8 @@ def handle_captcha_if_present(session, args, ready_selector: str,
     already_rendered = d["count"](ready_selector)
     when_blocked = getattr(args, "solve_captcha", "when-blocked") == "when-blocked"
 
-    # AWS WAF first, exactly as playwright_scraper.py does it: it is the one
-    # challenge this site has been measured serving, and `window.gokuProps`
-    # appears on nothing else. This engine used to skip the check entirely,
+    # AWS WAF first, exactly as playwright_scraper.py does it: `window.gokuProps`
+    # appears on nothing else. This site has not been observed serving it. This engine used to skip the check entirely,
     # so it could detect a WAF page through the generic markers and then have
     # nothing to do about it.
     challenge = detect_aws_waf(html, d["current_url"]())
@@ -300,7 +299,7 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.info("%s detected via %s, but content is already on the "
                     "page — not solving it.", challenge.kind, challenge.source)
         return False
-    # Section 19: "unsolvable" is a property of a PAGE -- it means the page
+    # "Unsolvable" is a property of a PAGE -- it means the page
     # carries no widget. An AWS WAF CHALLENGE-action page is exactly that:
     # challenge.js only, no puzzle rendered, nothing for a solver to work
     # on. Sending it anyway buys a token for a widget that was never there,
@@ -313,8 +312,7 @@ def handle_captcha_if_present(session, args, ready_selector: str,
                     "here to buy an answer to. NOTE: this engine does not "
                     "wait for the challenge script to finish either, so a "
                     "run can report blocked on a page a browser might have "
-                    "cleared by itself — measured on a GitHub runner "
-                    "2026-09-17, blocked 0.4s after the fetch.",
+                    "cleared by itself.",
                     challenge.aws_waf_action)
         return False
 
@@ -324,6 +322,10 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.warning("No 2captcha API key set, so this challenge is not "
                        "being solved. 2captcha does solve this type — set "
                        "TWOCAPTCHA_KEY (or pass --twocaptcha-key) to use it.")
+        return False
+    # The per-page allowance, checked BEFORE the paid request is sent. A
+    # caller that passes none gets a fresh one-solve allowance for this call.
+    if not (budget if budget is not None else page_flow.SolveBudget()).claim():
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -368,6 +370,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
 
+    # One paid-solve allowance for this page, shared by every block attempt
+    # and every exit rotation below; it never resets inside this function.
+    budget = page_flow.SolveBudget(page_flow.SOLVES_PER_PAGE)
+
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d: %s", page_num, url)
         load_failed, exit_failed = False, None
@@ -402,7 +408,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             break
 
         if handle_captcha_if_present(session, args, ready_selector,
-                                    proxy=pool.current if pool else None):
+                                    proxy=pool.current if pool else None,
+                                    budget=budget):
             time.sleep(1)
 
         html = d["content"]() or ""
@@ -628,7 +635,7 @@ def scrape(args) -> int:
                  if ok_pages else args.url)
 
     # The SITE's own arithmetic about the result set, recorded beside the
-    # status because "complete" and "exhaustive" are different words (§21). A
+    # status because "complete" and "exhaustive" are different words. A
     # sidecar that says only "complete" is lying by omission: it means "we
     # fetched everything this site would serve", which is worth knowing
     # alongside how much of the catalogue that actually was.
@@ -679,15 +686,15 @@ def parse_args():
     p.add_argument("--category", default=None,
                    help="A category/collection slug for --mode listing, or a "
                         "product slug for --mode product.")
-    p.add_argument("--pages", type=int, default=1)
-    p.add_argument("--delay", type=float, default=2.0)
-    p.add_argument("--concurrency", type=int, default=1,
+    p.add_argument("--pages", type=page_flow.positive_int, default=1)
+    p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0)
+    p.add_argument("--concurrency", type=page_flow.positive_int, default=1,
                    help="Ignored in this engine — see playwright_scraper.py.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "Counts ATTEMPTS, so 1 means 'try once, do not retry'; "
                         "0 is a usage error — see page_flow.attempts.")
-    p.add_argument("--retry-delay", type=float, default=2.0)
+    p.add_argument("--retry-delay", type=page_flow.non_negative_float, default=2.0)
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="sleepnumber_products")
     p.add_argument("--locale", default="en-US",
@@ -698,7 +705,7 @@ def parse_args():
     p.add_argument("--proxy-sessions", type=int, default=None,
                    help="With --proxy pointing at a 2Captcha proxy gateway, mint this many session-pinned exits from that one credential instead of keeping a file of them. Each session is a different exit address (measured 2026-09-17: ten sessions, ten distinct addresses). Has no effect with --proxy-file, and is refused for a non-2Captcha host.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2)
+    p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int, default=2)
     p.add_argument("--twocaptcha-key", default=None)
     p.add_argument("--allow-empty", action="store_true")
     p.add_argument("--fingerprint", action="store_true")
@@ -716,16 +723,12 @@ def parse_args():
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
+    # Captured BEFORE the environment fills anything in: afterwards a URL
+    # from SLEEPNUMBER_URL is indistinguishable from one typed on the
+    # command line, and a typed --category must win over the former.
+    typed_url = args.url
     env_config.apply(args)
-
-    if not args.url:
-        if args.mode == "product":
-            if not args.category:
-                p.error("--mode product needs --category (a product slug, "
-                        "e.g. cm-mattress) or --url")
-            args.url = product_url(args.category)
-        else:
-            args.url = category_url(args.category or "")
+    page_flow.resolve_start_url(p, args, typed_url)
 
     args.url = normalise_url(args.url)
     supported, why = is_supported_url(args.url)

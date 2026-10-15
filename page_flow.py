@@ -53,7 +53,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from product_parser import (detect_page_state, page_url, pagination,
-                            has_next_page, parse_products, CANONICAL_HOST)
+                            has_next_page, parse_products, CANONICAL_HOST,
+                            category_url, product_url)
 
 logger = logging.getLogger("page_flow")
 
@@ -146,6 +147,77 @@ def attempts(value) -> int:
             f"With 0 the load loop never runs, nothing is fetched, and the "
             f"engine reports the browser's blank page as a block.")
     return number
+
+
+def positive_int(value) -> int:
+    """argparse `type=` for counts that must be at least 1 (--pages,
+    --concurrency). argparse names the flag in its error line itself."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"must be an integer, not {value!r}")
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, not {number}")
+    return number
+
+
+def non_negative_int(value) -> int:
+    """argparse `type=` for counts where 0 is meaningful but a negative is
+    not (--proxy-block-retries: 0 means 'do not rotate')."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"must be an integer, not {value!r}")
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more, not {number}")
+    return number
+
+
+def non_negative_float(value) -> float:
+    """argparse `type=` for delays in seconds (--delay, --retry-delay). A
+    negative delay reaches `time.sleep` and raises mid-run, after pages
+    have already been fetched."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"must be a number, not {value!r}")
+    if not number >= 0:  # also rejects NaN
+        raise argparse.ArgumentTypeError(f"must be 0 or more, not {value}")
+    return number
+
+
+def resolve_start_url(parser: argparse.ArgumentParser, args,
+                      typed_url: Optional[str]) -> None:
+    """Set `args.url` from what the user TYPED, then from the environment.
+
+    `typed_url` must be captured BEFORE `env_config.apply(args)`: once the
+    loader has filled `args.url` from `SLEEPNUMBER_URL`, an environment URL
+    and a typed `--url` look identical. Without that distinction a typed
+    `--category furniture` was silently ignored in favour of whatever URL the
+    environment held (reproduced 2026-10-14), and the run read a different
+    category from the one asked for while reporting success.
+
+    Precedence, highest first: a typed `--url`; a typed `--category`; the
+    environment's URL; the default listing. Both `--url` and `--category`
+    typed is a usage error, because they can name different things.
+    """
+    if typed_url and args.category:
+        parser.error("--url and --category both given; they can disagree. "
+                     "Pass one of them.")
+    if args.category:
+        if args.url:
+            logger.info("--category %s was typed, so the URL from the "
+                        "environment (SLEEPNUMBER_URL) is not used.",
+                        args.category)
+        args.url = (product_url(args.category) if args.mode == "product"
+                    else category_url(args.category))
+        return
+    if args.url:
+        return
+    if args.mode == "product":
+        parser.error("--mode product needs --category (a product slug, "
+                     "e.g. cm-mattress) or --url")
+    args.url = category_url("")
 
 
 def ready_selector(mode: str) -> str:
@@ -270,6 +342,40 @@ def should_solve(state: str) -> bool:
     return STATE_POLICY.get(state, STATE_POLICY["unknown"])["solve"]
 
 
+# Paid solves allowed per PAGE, across every retry and every exit rotation.
+SOLVES_PER_PAGE = 1
+
+
+class SolveBudget:
+    """The per-page allowance for paid solves, shared by every engine.
+
+    One object per page, created before the first fetch attempt and passed
+    to every solve call site. `claim()` is called IMMEDIATELY BEFORE the paid
+    request is sent and nowhere else, so detecting nothing, finding the
+    content already rendered or having no API key spends nothing.
+
+    Before this existed the solver ran once per block attempt, so a page
+    fetched through a 3-exit pool could buy 3 solves (reproduced 2026-10-14
+    with the solver stubbed). The allowance deliberately does NOT reset on
+    retry or rotation: a fresh exit is a reason to re-fetch, not a fresh
+    allowance. A claim whose request then fails still counts — it was sent,
+    and may have been billed.
+    """
+
+    def __init__(self, limit: int = SOLVES_PER_PAGE):
+        self.limit = limit
+        self.spent = 0
+
+    def claim(self) -> bool:
+        if self.spent >= self.limit:
+            logger.info("Not attempting another solve on this page: %d of %d "
+                        "already bought. A second solve is a second charge "
+                        "for the same answer.", self.spent, self.limit)
+            return False
+        self.spent += 1
+        return True
+
+
 def counts_as_blocked(state: str) -> bool:
     return STATE_POLICY.get(state, STATE_POLICY["unknown"])["blocked"]
 
@@ -369,8 +475,7 @@ def products_shortfall(page1_html: str, product_ids) -> Optional[int]:
     2026-10-13 that low price coverage only logs a warning, so a run can exit
     0 holding less than it should, and proposed a configurable quality gate.
     The gate would work, but a threshold is a guess about how much loss is
-    acceptable; this is the response itself proving the loss. CLAUDE.md §26
-    records the same correction on a sibling: a served page inside its own
+    acceptable; this is the response itself proving the loss. A served page inside its own
     stated total that yields fewer rows is a parser problem, and exit 4
     ("nothing listed") would claim a fact the response contradicts.
 
@@ -414,7 +519,7 @@ def listing_arithmetic(page1_html: str) -> Dict[str, Any]:
 # How much smaller than page 1 a later page may be before it is worth
 # mentioning. Informational only: it NEVER changes an exit code, because a
 # short last page is the normal shape of a listing that has run out, and a
-# threshold is a weaker signal than a marker (§17's classification-order
+# threshold is a weaker signal than a marker (the classification-order
 # lesson, applied to a warning rather than to a state).
 THIN_PAGE_RATIO = 0.4
 

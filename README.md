@@ -444,8 +444,8 @@ python3 scraper_api_client.py \
 
 Verified 2026-09-17: upstream HTTP 200, 882 KB, **52 rows, exit 0**, billed
 $0.0005 — the same rows the browser engines produce. A Scraping Browser
-profile's credentials last about a day, so mint one when you need it rather
-than keeping it in `.env`:
+profile's credentials expire (how long they last was not measured here), so
+mint one when you need it rather than keeping it in `.env`:
 
 ```bash
 python3 tools/browser_profile_client.py accounts
@@ -483,7 +483,8 @@ python3 playwright_scraper.py --mode product --category cm-mattress
 - **A run that finds nothing writes nothing.** Last night's good output is
   never replaced with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes:** `0` ok · `1` crash · `2` bad usage · `3` blocked ·
-  `4` zero products · `5` remote API error · `6` partial.
+  `4` zero products · `5` the content was never obtained (a remote API
+  error, a navigation timeout, a dead proxy) · `6` partial.
 - **`<out>.meta.json` beside every run that WRITES ROWS**, recording
   `status`, `stop_reason`, `transport`, which pages failed by number, and the
   site's own arithmetic about the result set — `total_results`, `per_page`,
@@ -505,6 +506,13 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   your own log; this repo will not put a contradicting file next to good
   data.
 - **An empty CSV still carries its header.**
+- **Writes are atomic.** Each file is written beside its target and renamed
+  over it, so a crash or a full disk mid-write leaves the previous file
+  intact rather than truncated.
+- **CSV cells that a spreadsheet would execute are neutralised.** A string
+  cell beginning with `=`, `+`, `-`, `@`, a tab, CR or LF gets a leading
+  apostrophe in the CSV only; numbers and the JSON are untouched, and the
+  sidecar records `csv_cells_escaped`. On the committed sample none qualify.
 
 ## Diffing two runs
 

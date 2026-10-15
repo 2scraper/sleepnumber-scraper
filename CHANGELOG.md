@@ -11,6 +11,58 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+> **Behaviour changes:**
+>
+> - **A typed `--category` now wins over `SLEEPNUMBER_URL`.** With that
+>   variable in the environment or `.env`, `--category furniture` used to be
+>   ignored silently and the environment's URL was read instead. Typing both
+>   `--url` and `--category` is now a usage error (exit 2), because the two
+>   can name different things. `.env.example` ships `SLEEPNUMBER_URL`
+>   commented out.
+> - **Negative or zero counts are usage errors (exit 2)** in every entry
+>   point: `--pages` and `--concurrency` must be at least 1; `--delay`,
+>   `--retry-delay` and `--proxy-block-retries` must be 0 or more. A negative
+>   delay used to reach `time.sleep` and crash the run after pages had been
+>   fetched.
+> - **CSV cells that begin with `=`, `+`, `-`, `@`, a tab, CR or LF get a
+>   leading apostrophe** so a spreadsheet reads them as text. Strings only;
+>   numbers and the JSON output are unchanged, and the sidecar records
+>   `csv_cells_escaped`. Measured on the committed sample and fixtures: 0 of
+>   362 string cells qualify, so on today's catalogue this changes nothing.
+> - **At most one paid captcha solve per page**, across every retry and exit
+>   rotation. The solver used to run once per block attempt, so a page
+>   fetched through a 3-exit pool could buy 3 solves. No challenge has ever
+>   been observed on this site, so this was a latent cost, not a bill.
+> - **The canary fails, rather than skipping green, when no
+>   `SLEEPNUMBER_PROXY` secret is set.**
+
+### Fixed
+
+- **Output files are written atomically.** JSON, CSV and the
+  `.meta.json` sidecar go to a temporary file in the same directory, are
+  flushed and fsynced, then renamed over the target. A failure halfway
+  through a write used to leave a truncated file where a good one had been
+  (reproduced: a 559-byte `out.json` became 13 bytes of invalid JSON). A new
+  file gets the mode `open()` would have given it; an existing file keeps
+  its own.
+- **The credential scan reads what it used to skip.** Its exclusions tested
+  the absolute path, so a clone under a directory called `venv/` scanned 0
+  files and printed the clean line; they now test the path relative to the
+  repo, and a scan of zero files fails. `.json`, `.csv`, `.toml`, `.cfg`,
+  `.ini` and renamed copies of `.env` (`.env.bak`, `.env.local`) are now
+  read.
+- **The pyppeteer engine hands the HTTP status and headers to the
+  classifier**, as the Playwright engine does.
+- **`.env.example` and the README no longer say the block tracks geography
+  or that Scraping Browser credentials last "about a day".** The block is
+  address reputation (GB and US residential exits were both served), and the
+  credential lifetime was never measured here.
+- Comments that described other sites' measurements as this site's were
+  corrected, and references to private notes were replaced with the rule in
+  the repo's own words. A suite check keeps them out.
+- The Docker image now carries `http_scraper.py`, and CI tests Python 3.13,
+  which the badge already claimed.
+
 ## [0.2.0] — 2026-10-13
 
 > **Behaviour change:** `--retries 0` is now a usage error (exit 2) in every

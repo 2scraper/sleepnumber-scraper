@@ -39,7 +39,7 @@ Usage
 
 `--key` defaults to $TWOCAPTCHA_KEY and `--cdp-url` to
 $SLEEPNUMBER_CDP_ENDPOINT, so neither needs to be typed — a secret on a
-command line is readable by anything that can run `ps` (§3).
+command line is readable by anything that can run `ps`.
 
 Requires: pip install -r requirements.txt   (no browser at all)
 """
@@ -240,7 +240,7 @@ def main() -> int:
             # Scraper API's exits do not change between attempts on this
             # site: measured 2026-09-17, two consecutive attempts returned
             # the identical 919-byte refusal and were billed $0.0005 each.
-            # Retrying it buys a second copy of a certainty, which is §8's
+            # Retrying it buys a second copy of a certainty, which is
             # "detected is not the same as paying" with a price tag. A
             # challenge page WOULD be worth retrying — that is why the two
             # are different return values rather than one.
@@ -389,7 +389,7 @@ def parse_args():
                         "i.e. one retry). One retry is "
                         "usually worth it. Each attempt is a separate billable task, so "
                         "this defaults to 1.")
-    p.add_argument("--retry-delay", type=int, default=10,
+    p.add_argument("--retry-delay", type=page_flow.non_negative_float, default=10,
                    help="Seconds between retries (default 10)")
     p.add_argument("--dump-html", default=None,
                    help="Also write the raw returned HTML to this path (always, even on success)")
