@@ -51,7 +51,7 @@ failure.
 AND IT IS NOT A FOURTH COPY OF THE PAGE LOOP
 ---------------------------------------------
 The three browser engines each carry their own loop, which this family has
-learned to regret (CLAUDE.md §26). This file does not add a fourth: it has
+learned to regret. This file does not add a fourth: it has
 no browser to launch, relaunch or rotate, no readiness wait and no solve
 budget, so what is left is fetch, classify, parse, merge. The shared
 decisions it does need — how to classify a page, how to plan pages, when a
@@ -125,7 +125,7 @@ def _mask_credentials(text: str) -> str:
     """Mask every credential in a string, not just the first.
 
     `requests` puts the FULL URL into the text of its exceptions, and a proxy
-    URL carries a password — so an exception message is a log (CLAUDE.md §8).
+    URL carries a password — so an exception message is a log.
     Masking is global because a masker that handles the first occurrence
     prints the password the other four times and looks like it is working.
     """
@@ -152,7 +152,7 @@ class PageOutcome:
 # What `requests` raises when the PROXY is the problem rather than the site.
 # They want opposite responses — a timeout deserves another try at the same
 # exit, a dead proxy a different one — and catching only the timeout type is
-# how this escapes as a traceback (§8).
+# how this escapes as a traceback.
 #
 # Measured on the rotating 2Captcha gateway this repo was developed against:
 # a `ConnectionResetError` during the CONNECT handshake, surfacing as
@@ -234,7 +234,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if page_flow.counts_as_blocked(outcome.state):
             outcome.blocked_by = detect_bot_challenge(html) or outcome.state
-            # State what was OBSERVED before saying why (CLAUDE.md §28): a
+            # State what was OBSERVED before saying why: a
             # message that leads with a recommendation sends a reader off to
             # buy something before they know what actually came back.
             logger.error(
@@ -390,16 +390,16 @@ def parse_args():
     p.add_argument("--category", default=None,
                    help="A category/collection slug for --mode listing, or a "
                         "product slug for --mode product.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=page_flow.positive_int, default=1,
                    help="Listing pages to crawl. No category measured on this "
                         "site has more than one.")
-    p.add_argument("--delay", type=float, default=2.0,
+    p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0,
                    help="Delay between pages, seconds.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page before giving up (default 3). "
                         "Counts ATTEMPTS, so 1 means 'try once, do not "
                         "retry'; 0 is a usage error.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.non_negative_float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")
     p.add_argument("--timeout", type=float, default=60.0,
                    help="Per-request timeout, seconds. Every remote call here "
@@ -417,7 +417,7 @@ def parse_args():
                         "Wins over --proxy.")
     p.add_argument("--proxy-rotate", choices=list(ROTATE_MODES), default="per-run")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int, default=2,
                    help="When a page comes back refused, retry it from this "
                         "many OTHER exits before giving up. Needs a pool.")
     p.add_argument("--allow-empty", action="store_true",
@@ -426,16 +426,12 @@ def parse_args():
                    help="Save the exact HTML the parser is given, on success "
                         "as well as failure.")
     args = p.parse_args()
+    # Captured BEFORE the environment fills anything in: afterwards a URL
+    # from SLEEPNUMBER_URL is indistinguishable from one typed on the
+    # command line, and a typed --category must win over the former.
+    typed_url = args.url
     env_config.apply(args)
-
-    if not args.url:
-        if args.mode == "product":
-            if not args.category:
-                p.error("--mode product needs --category (a product slug, "
-                        "e.g. cm-mattress) or --url")
-            args.url = product_url(args.category)
-        else:
-            args.url = category_url(args.category or "")
+    page_flow.resolve_start_url(p, args, typed_url)
 
     args.url = normalise_url(args.url)
     supported, why = is_supported_url(args.url)

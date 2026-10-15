@@ -36,10 +36,13 @@ contract works unchanged and price moves are reported per size.
 
 Every figure quoted in this file was measured on 2026-09-17 through a US
 residential exit, and names its date because it is a snapshot of one run
-rather than a property of the site (CLAUDE.md §13).
+rather than a property of the site.
 """
+import contextlib
 import csv
 import json
+import os
+import tempfile
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Type
@@ -48,7 +51,7 @@ from typing import Optional, List, Set, Sequence, Any, Type
 # The host a row came from. Sleep Number is one US storefront on one host,
 # so unlike some siblings this genuinely does not vary — but the column stays,
 # in the family's position and under the family's name, so a consumer reading
-# several of these repos reads the same first five columns (§9).
+# several of these repos reads the same first five columns.
 SOURCE_DEFAULT = "sleepnumber.com"
 
 @dataclass
@@ -107,7 +110,7 @@ class Product:
     # Computed from the two, never read from the badge. Null — not 0 and
     # never negative — when the figures are not what they seem.
     discount_pct: Optional[float] = None
-    # WHICH view built the price (§8: never present a guess as a fact).
+    # WHICH view built the price (never present a guess as a fact).
     #
     #   payload                   the hydration payload only. The normal case
     #                             on a listing that publishes no ItemList.
@@ -181,7 +184,7 @@ def dedupe_by_key(rows: Sequence[Any], seen: Set[str], key: str = "sku") -> List
     than its siblings do: a scroll batch re-parses the WHOLE feed, cards
     already read included, so every batch after the first arrives mostly
     duplicate by design. A batch that drops all of its rows is the signal
-    that the feed is exhausted, which is §7's data-based terminating
+    that the feed is exhausted, which is the data-based terminating
     condition and the only one available here.
 
     A row with no key is always kept: there is nothing to check a duplicate
@@ -208,6 +211,105 @@ def dedupe_by_sku(rows: Sequence[Any], seen: Set[str]) -> List[Any]:
     return dedupe_by_key(rows, seen, key="sku")
 
 
+@contextlib.contextmanager
+def _atomic(path: str, newline: Optional[str] = None):
+    """Write to a temporary file beside `path`, then rename over it.
+
+    `open(path, "w")` truncates before a single byte is written, so a crash,
+    a kill, a full disk or a Ctrl-C halfway through `json.dump` leaves a
+    SHORTER file where a complete one was. That breaks exactly the promise
+    `save()` keeps by refusing to overwrite good output with an empty
+    result: the previous good run is destroyed by the ATTEMPT to replace it
+    rather than by its outcome. Reproduced here before the fix
+    (2026-10-14): a write that failed halfway left a 559-byte good
+    `out.json` as 13 bytes of invalid JSON, and clobbered the sidecar too.
+
+    The sidecar is the part that matters most. `<out>.meta.json` is the file
+    a consumer branches on, so a truncated one beside good rows reads as a
+    broken run over data that is fine.
+
+    Three details, each of which is the reason for a line here:
+
+    * the temp file goes in the target's OWN directory, because `os.replace`
+      is atomic only within one filesystem and a temp file under /tmp can be
+      on another, where the rename degrades to an interruptible copy;
+    * `fsync` before the rename is what makes the bytes durable rather than
+      merely visible, so a power loss cannot leave a renamed empty file;
+    * `newline` is passed through because the csv module requires
+      `newline=""` and that requirement has to survive the move into the
+      temp file, or every row gains a stray CR on Windows.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline=newline, dir=directory,
+        prefix=os.path.basename(path) + ".", suffix=".tmp", delete=False)
+    try:
+        with handle:
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+        # `NamedTemporaryFile` creates at 0600 and `os.replace` keeps the
+        # temp file's mode, so without this every output comes out readable
+        # by its owner alone — a regression from `open(path, "w")`, which
+        # honours the umask, and one that only appears once the write became
+        # atomic. Measured across the family on 2026-10-08 by CALLING each
+        # repo's sidecar writer: of 43 repos, 8 produce a 0600 sidecar, and
+        # they are exactly the ones that took `_atomic` without this.
+        #
+        # An existing target keeps its OWN mode, because someone may have
+        # tightened it on purpose and a save should not undo that. A new one
+        # gets exactly what `open()` would have given it. A flat `0o644 & ~umask`
+        # would quietly narrow 0664 to 0644 under umask 002 and clobber a
+        # deliberately tightened file, so neither is used.
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(handle.name, mode)
+        os.replace(handle.name, path)
+    except BaseException:
+        # Including KeyboardInterrupt and SystemExit: an interrupted run
+        # must not leave `out.json.ab12cd.tmp` behind beside the good file.
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
+# A spreadsheet treats a cell beginning with one of these as a FORMULA
+# rather than as text, and every string in these rows was written by
+# whoever wrote the product listing — a name, a size, a promo badge. `=HYPERLINK(...)`, `+cmd|...` and `@SUM(...)` are the classic
+# shapes; the tab and the two newlines are here because some readers strip
+# a leading one and then execute whatever followed it.
+CSV_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+# Excel, Google Sheets and LibreOffice all read a leading apostrophe as
+# "the rest of this cell is text" and do not display it. A consumer parsing
+# the file with the `csv` module DOES see it, which is why the count goes
+# into the sidecar rather than staying silent.
+CSV_FORMULA_ESCAPE = "'"
+
+
+def _csv_escape(v: Any):
+    """Neutralise a formula-shaped cell. Returns (value, was_escaped).
+
+    Only STRINGS are touched. Escaping a number would turn `-5` into text
+    and break every sum a consumer writes over the column — `price` and
+    `rating` are what anyone monitoring this site is actually summing.
+
+    CSV only, on purpose. The JSON output keeps the site's bytes exactly as
+    served, so the two files deliberately differ, and `csv_cells_escaped`
+    in the sidecar is what declares that divergence rather than leaving it
+    to be discovered as a stray apostrophe.
+    """
+    if isinstance(v, str) and v.startswith(CSV_FORMULA_LEADS):
+        return CSV_FORMULA_ESCAPE + v, True
+    return v, False
+
+
 # CSV cannot hold a list. Joining with " | " keeps the cell readable in a
 # spreadsheet and round-trippable by splitting on the same separator; the
 # JSON output keeps the real list, so nothing is lost for a consumer that
@@ -223,11 +325,11 @@ def _csv_value(v: Any) -> Any:
 
 
 def write_json(rows: Sequence[Any], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
 
 
-def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Product) -> None:
+def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Product) -> int:
     # An empty result still gets the header row. A zero-byte file makes a
     # consumer fail on read (no columns to parse) instead of reading a valid
     # table with zero rows — and "an empty result is still a well-formed
@@ -236,11 +338,20 @@ def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Product) -> None:
     # The header comes from `row_cls`, not from the first row, so an empty
     # run still writes the columns of the mode that produced it.
     fieldnames = [f.name for f in fields(row_cls)]
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    escaped = 0
+    with _atomic(path, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in rows:
-            writer.writerow({k: _csv_value(v) for k, v in asdict(r).items()})
+            row = {}
+            for k, v in asdict(r).items():
+                # AFTER the list serialiser: a joined list cell is text too
+                # and can start with a formula character.
+                value, was_escaped = _csv_escape(_csv_value(v))
+                row[k] = value
+                escaped += was_escaped
+            writer.writerow(row)
+    return escaped
 
 
 # Exit code used when a run completes but produced nothing. Distinct from 1
@@ -252,19 +363,14 @@ EXIT_NO_PRODUCTS = 4
 # search genuinely matched nothing" from "something stood between us and the
 # content". See product_parser.detect_bot_challenge.
 #
-# On this site this code specifically does NOT cover the three ways to get a
-# real page with no products on it: a `/p/<slug>` discovery hub, which
-# answers 200 with banners and carousels and no stories; a tag whose feed
-# matches nothing ("Oops, produk nggak ditemukan"); and one page past the
-# end of a category listing. All three are EXIT_NO_PRODUCTS — the request
-# was served exactly as asked and simply has no products on it. Reporting
-# any of them as blocked would send a user hunting for a proxy problem that
-# does not exist.
-#
-# What EXIT_BLOCKED means here is unusually literal: this site refuses a
-# address it has scored NOTHING at all. No status code, no interstitial, no
-# vendor marker — the HTTP/2 stream is reset and the run sees a connection
-# error rather than a page.
+# On this site this code means CloudFront refused the address: HTTP 403
+# with its 919-byte "Request blocked" page, which every datacentre address
+# measured so far receives. It does NOT cover a real page with no products
+# on it — the site's own 404, a landing page with no product list, or a
+# category that genuinely holds nothing. Those are served exactly as asked
+# and are EXIT_NO_PRODUCTS (or a usage problem with the URL); reporting them
+# as blocked would send a user hunting for a proxy problem that does not
+# exist.
 EXIT_BLOCKED = 3
 
 # Exit code for a run that gathered SOME rows and then stopped early — a
@@ -344,7 +450,7 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
     both complete, and between runs of different `mode`.
     """
     path = f"{out_prefix}.meta.json"
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"[+] Wrote run metadata -> {path} (status={meta.get('status')})")
     return path
@@ -363,22 +469,15 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
       partial  — rows were gathered, then the run stopped early
       failed   — nothing was gathered at all
 
-    `mode` and `source` are both recorded, and on this site BOTH of them
-    genuinely vary. `mode`, because a tag row and an archive row populate
-    different columns: reading time and word count come from a payload the
-    tag feed does not carry at all (21 fields per post against the archive's
-    84), so diffing one against the other would report both as having
-    appeared from nowhere. `source`, because a row must say which host
-    domain, and two runs that landed on different hosts describe the same
-    catalogue through different addresses. diff_runs.py refuses a pair whose
-    modes differ.
+    `mode` and `source` are both recorded. `mode` because a listing run
+    and a product run read different routes, and diff_runs.py refuses a pair
+    whose modes differ. `source` because a row must say which host it came
+    from; on this site it is always sleepnumber.com.
 
-    `extra` carries facts about the run that are not about any single row.
-    This repo puts the scroll trace there, plus `rows_new_per_batch`, and —
-    in archive mode — the DAYS a run covered and any day that redirected.
-    A redirect is the thing worth recording: a tag day with no stories does
-    not 404, it redirects up to the month view, which is a different
-    renderer holding a different set of stories (FINDINGS.md §4).
+    `extra` carries facts about the run that are not about any single row —
+    the site's own listing arithmetic (`total_results`, `per_page`,
+    `pages_available`) and,
+    on a CSV write, `csv_cells_escaped`.
 
     `pages_failed` lists the pages that did not yield data, by number.
     `pages_completed` alone was enough only while pages were fetched strictly
@@ -409,7 +508,8 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
 
 
 def save(rows: Sequence[Any], out_prefix: str, fmt: str,
-         allow_empty: bool = False, row_cls: Type = Product) -> int:
+         allow_empty: bool = False, row_cls: Type = Product,
+         stats: Optional[dict] = None) -> int:
     """Write JSON/CSV and return a process exit code.
 
     Returns 0 when rows were written, EXIT_NO_PRODUCTS when there were none.
@@ -436,8 +536,18 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
         write_json(rows, f"{out_prefix}.json")
         print(f"[+] Saved {len(rows)} products -> {out_prefix}.json")
     if fmt in ("csv", "both"):
-        write_csv(rows, f"{out_prefix}.csv", row_cls=row_cls)
+        escaped = write_csv(rows, f"{out_prefix}.csv", row_cls=row_cls)
         print(f"[+] Saved {len(rows)} products -> {out_prefix}.csv")
+        # Through `stats`, because the return value is an exit code. The
+        # caller threads it into the sidecar so the CSV/JSON divergence is
+        # declared rather than discovered.
+        if stats is not None:
+            stats["csv_cells_escaped"] = escaped
+        if escaped:
+            print(f"[!] {escaped} CSV cell(s) began with a formula character "
+                  f"and were prefixed with {CSV_FORMULA_ESCAPE!r} so a "
+                  f"spreadsheet reads them as text. The JSON output is "
+                  f"unchanged — see csv_cells_escaped in the sidecar.")
     return 0 if rows else EXIT_NO_PRODUCTS
 
 
@@ -451,7 +561,7 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # running the mode rather than by reading the code.
 #
 # "no_new_products" is this site's data-side termination condition and the
-# reason §7's rule matters here specifically: `?page=N` is IGNORED by Sleep
+# reason the rule matters here specifically: `?page=N` is IGNORED by Sleep
 # Number. `/categories/sheets-pillowcases?page=2` and `?page=99` both answer
 # HTTP 200 carrying page ONE — the same ten products, with the payload's own
 # `page` field still reading 1. A count-based loop would therefore never
@@ -467,11 +577,11 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 # All three are COMPLETE, and the distinction is the point of this tuple: a
 # run that asked for 5 pages of a 1-page category and stopped at 1 read the
 # whole category. Reporting that `partial` would put the canary permanently
-# red, which teaches everyone to ignore the canary (§11).
+# red, which teaches everyone to ignore the canary.
 #
 # What must NOT reach here is a run that stopped because it was REFUSED.
 # CloudFront's refusal and an empty category are different facts with
-# different exit codes (§8), and page_flow.STATE_POLICY is what keeps them
+# different exit codes, and page_flow.STATE_POLICY is what keeps them
 # apart before this tuple is ever consulted.
 # "parser_incomplete" is deliberately ABSENT: the site counted more
 # products than we parsed, so the run did not read what it was asked to read.
@@ -514,7 +624,9 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     # names has a hole for every name nobody added to it.
     complete = stop_reason in COMPLETE_STOP_REASONS and not pages_failed
     row_cls = ROW_CLASS_BY_MODE.get(mode, Product)
-    rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls)
+    write_stats: dict = {}
+    rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls,
+              stats=write_stats)
     wrote_output = bool(rows) or allow_empty
 
     if wrote_output:
@@ -525,12 +637,14 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
             pages_requested=pages_requested, pages_completed=pages_completed,
             pages_failed=pages_failed, mode=mode, source=source,
             start_url=start_url, final_url=final_url, products=len(rows),
-            extra=extra))
+            # Housekeeping merged UNDER the caller's extra: a collision
+            # must never drop site data in favour of a write statistic.
+            extra=({**write_stats, **(extra or {})} if write_stats else extra)))
 
     if not rows:
         # Nothing gathered at all, and WHY decides the code. The three
         # outcomes are genuinely different things and a pipeline branches on
-        # them (§8: blocked is not empty is not partial):
+        # them (blocked is not empty is not partial):
         #
         #   blocked          something stood between the run and the content
         #   did not complete we never reached the site — a dead proxy, a

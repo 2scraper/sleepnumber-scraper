@@ -263,7 +263,7 @@ def _connect_remote(pw, args):
     if getattr(args, "no_autosolve", False):
         # Deliberately NOT enabling it. This exists so a challenge can be met
         # and left unsolved, which is the only way to measure how often one
-        # clears on its own -- the control the family's section 19 requires
+        # clears on its own -- the control needed
         # before a solve may be credited with anything. Without it, every
         # challenge this endpoint meets is solved before it can be observed.
         logger.warning("--no-autosolve: Captcha.setAutoSolve NOT enabled. "
@@ -368,7 +368,7 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
 
 
 def handle_captcha_if_present(page, args, ready_selector: str,
-                              proxy=None) -> bool:
+                              proxy=None, budget=None) -> bool:
     """Detect and solve a challenge. True if something was solved.
 
     See captcha_solver.py's closing note: no challenge of this kind was
@@ -383,9 +383,10 @@ def handle_captcha_if_present(page, args, ready_selector: str,
     already_rendered = len(page.query_selector_all(ready_selector))
     when_blocked = getattr(args, "solve_captcha", "when-blocked") == "when-blocked"
 
-    # AWS WAF first: it is the one challenge this site has actually been
-    # measured serving (2026-09-16), and it is unambiguous when present --
-    # `window.gokuProps` appears on nothing else. The reCAPTCHA detectors
+    # AWS WAF first: it is unambiguous when present -- `window.gokuProps`
+    # appears on nothing else. This site has NOT been observed serving it
+    # (or any other challenge); it is checked because a CloudFront-fronted
+    # site can add AWS WAF without notice. The reCAPTCHA detectors
     # below stay wired for the same "do not narrow detection to what has
     # been seen" reason they were wired originally.
     challenge = detect_aws_waf(html, page.url)
@@ -432,7 +433,7 @@ def handle_captcha_if_present(page, args, ready_selector: str,
                                "continuing with whatever the page holds.", e)
         return True
 
-    # Section 19: "unsolvable" is a property of a PAGE -- it means the page
+    # "Unsolvable" is a property of a PAGE -- it means the page
     # carries no widget. An AWS WAF CHALLENGE-action page is exactly that:
     # challenge.js only, no puzzle rendered, nothing for a solver to work
     # on. Sending it anyway buys a token for a widget that was never there,
@@ -445,8 +446,7 @@ def handle_captcha_if_present(page, args, ready_selector: str,
                     "here to buy an answer to. NOTE: this engine does not "
                     "wait for the challenge script to finish either, so a "
                     "run can report blocked on a page a browser might have "
-                    "cleared by itself — measured on a GitHub runner "
-                    "2026-09-17, blocked 0.4s after the fetch.",
+                    "cleared by itself.",
                     challenge.aws_waf_action)
         return False
 
@@ -455,6 +455,10 @@ def handle_captcha_if_present(page, args, ready_selector: str,
     if not args.twocaptcha_key:
         logger.warning("No 2captcha API key — continuing with whatever the "
                        "page already holds.")
+        return False
+    # The per-page allowance, checked BEFORE the paid request is sent. A
+    # caller that passes none gets a fresh one-solve allowance for this call.
+    if not (budget if budget is not None else page_flow.SolveBudget()).claim():
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -518,22 +522,23 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # to debug from. "Fail loudly" means saying WHAT failed.
     last_error, attempts_made = None, 0
 
+    # One paid-solve allowance for this page, shared by every block attempt
+    # and every exit rotation below; it never resets inside this function.
+    budget = page_flow.SolveBudget(page_flow.SOLVES_PER_PAGE)
+
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d: %s", page_num, url)
         load_failed, exit_failed = False, None
         resp_status, resp_headers = None, None
         for attempt in range(1, args.retries + 1):
             try:
-                # The Response is KEPT, not discarded. Until v0.4.1 this
-                # return value was thrown away and `_classify` was called
-                # with no status and no headers at all -- which meant this
-                # site's AWS WAF captcha (HTTP 405, `x-amzn-waf-action:
-                # captcha`) reached the classifier as a bare 2331-byte body
-                # with no vendor marker it recognised, and came out as
-                # `empty`: exit 4, "zero rows", reported as a real answer
-                # about the catalogue rather than as a challenge. `goto`
-                # returns None for a same-document navigation, so neither
-                # field is assumed present.
+                # The Response is KEPT, not discarded, so the classifier
+                # sees the status and headers. A refusal or a WAF challenge
+                # whose body carries no marker the classifier recognises is
+                # otherwise read as `empty`: exit 4, "zero rows", reported
+                # as an answer about the catalogue. `goto` returns None for
+                # a same-document navigation, so neither field is assumed
+                # present.
                 response = session.page.goto(url, wait_until="domcontentloaded",
                                              timeout=60000)
                 if response is not None:
@@ -580,7 +585,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             break
 
         if handle_captcha_if_present(session.page, args, ready_selector,
-                                    proxy=pool.current if pool else None):
+                                    proxy=pool.current if pool else None,
+                                    budget=budget):
             session.page.wait_for_timeout(1000)
 
         html = _content_when_settled(session.page) or ""
@@ -838,7 +844,7 @@ def scrape(args) -> int:
         elif pool.rotates_per_page():
             logger.info("--proxy-rotate per-page has no effect above "
                         "--concurrency 1: each worker owns one exit for "
-                        "its whole lifetime by design (CLAUDE.md §7), "
+                        "its whole lifetime by design, "
                         "rotated only per WORKER, not per page.")
 
     with sync_playwright() as pw:
@@ -955,7 +961,7 @@ def scrape(args) -> int:
                  if ok_pages else args.url)
 
     # The SITE's own arithmetic about the result set, recorded beside the
-    # status because "complete" and "exhaustive" are different words (§21). A
+    # status because "complete" and "exhaustive" are different words. A
     # sidecar that says only "complete" is lying by omission: it means "we
     # fetched everything this site would serve", which is worth knowing
     # alongside how much of the catalogue that actually was.
@@ -1014,23 +1020,23 @@ def parse_args():
                         "'furniture', 'sheets-pillowcases' or "
                         "'collections/mattresses-climate-collection'. For "
                         "--mode product, a product slug as it appears in a "
-                        "canonical URL, e.g. 'cm-mattress'. Ignored when "
-                        "--url is given.")
-    p.add_argument("--pages", type=int, default=1,
+                        "canonical URL, e.g. 'cm-mattress'. Cannot be "
+                        "combined with --url; wins over SLEEPNUMBER_URL.")
+    p.add_argument("--pages", type=page_flow.positive_int, default=1,
                    help="Listing pages to crawl. Ignored in --mode product. "
                         "Note that no category measured on this site has more "
                         "than one page (per_page is 100 and the largest "
                         "category holds 20 products), so this is machinery "
                         "for a catalogue that grows, not a knob you need.")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--concurrency", type=page_flow.positive_int, default=1, metavar="N",
                    help="Fetch pages through N parallel workers. REFUSED on "
                         "this site and told why: ?page=N is ignored by the "
                         "server, so workers would fetch page one in parallel. "
                         "See page_flow.CONCURRENCY_CAPABLE_MODES.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3).")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.non_negative_float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="sleepnumber_products", help="Output file prefix")
@@ -1054,7 +1060,7 @@ def parse_args():
     p.add_argument("--proxy-sessions", type=int, default=None,
                    help="With --proxy pointing at a 2Captcha proxy gateway, mint this many session-pinned exits from that one credential instead of keeping a file of them. Each session is a different exit address (measured 2026-09-17: ten sessions, ten distinct addresses). Has no effect with --proxy-file, and is refused for a non-2Captcha host.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int, default=2,
                    help="When a page comes back blocked, retry it from this "
                         "many OTHER exits before giving up (default 2). "
                         "Needs a pool of more than one.")
@@ -1081,16 +1087,12 @@ def parse_args():
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
+    # Captured BEFORE the environment fills anything in: afterwards a URL
+    # from SLEEPNUMBER_URL is indistinguishable from one typed on the
+    # command line, and a typed --category must win over the former.
+    typed_url = args.url
     env_config.apply(args)
-
-    if not args.url:
-        if args.mode == "product":
-            if not args.category:
-                p.error("--mode product needs --category (a product slug, "
-                        "e.g. cm-mattress) or --url")
-            args.url = product_url(args.category)
-        else:
-            args.url = category_url(args.category or "")
+    page_flow.resolve_start_url(p, args, typed_url)
 
     args.url = normalise_url(args.url)
     supported, why = is_supported_url(args.url)

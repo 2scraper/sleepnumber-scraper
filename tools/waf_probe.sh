@@ -5,7 +5,7 @@
 # central claim is a measurement — "every URL answers an identical 919-byte
 # CloudFront 403 from a datacentre address, and 200 from a residential one" —
 # and a number describing a living thing has to arrive with the command that
-# reproduces it or not be written down at all (CLAUDE.md §13).
+# reproduces it or not be written down at all.
 #
 # It is also the first thing to run when the scraper suddenly returns exit 3:
 # the question is almost always "is this address still being served", and

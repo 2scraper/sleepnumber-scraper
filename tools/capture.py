@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """capture.py — fetch Sleep Number pages and report what a parser could read.
 
-CLAUDE.md §15 step 2 says to capture the target page BEFORE writing any
-parser, and to answer three questions from the dump rather than from
+Capture the target page BEFORE writing any
+parser, and answer three questions from the dump rather than from
 expectation: how many JSON-LD blocks are there, what does pagination look
-like in the served markup, and does the URL carry the product id. §21 adds a
+like in the served markup, and does the URL carry the product id. Add a
 fourth that costs one request and has twice been the answer: what does the
 site's own FRONT END call? A page that is gated does not mean its data is.
 
 So this does both halves in one pass — it saves the bytes, and it prints the
 counts. It exists as a repo tool rather than a notebook because every figure
 the README quotes about this site has to arrive with the command that
-reproduces it (§13); a number nobody can re-measure rots silently.
+reproduces it; a number nobody can re-measure rots silently.
 
     python3 tools/capture.py --out captures/            # the default URL set
     python3 tools/capture.py --url https://www.sleepnumber.com/c/beds
@@ -63,8 +63,8 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-# Starting points, deliberately spanning more than one page KIND: §15 says one
-# dump teaches you one locale, and §20 adds that a DETAIL page may publish a
+# Starting points, deliberately spanning more than one page KIND: one
+# dump teaches you one locale, and a DETAIL page may publish a
 # different JSON-LD @type than the listing that links to it — porting a
 # listing parser to a detail page then returns zero rows in silence.
 DEFAULT_URLS = [
@@ -76,7 +76,7 @@ DEFAULT_URLS = [
     "https://www.sleepnumber.com/categories/mattresses/king",
     "https://www.sleepnumber.com/categories/beds-on-sale",
     "https://www.sleepnumber.com/collections/mattresses-climate-collection",
-    # Detail pages — a DIFFERENT page kind on purpose. §20: a detail page may
+    # Detail pages — a DIFFERENT page kind on purpose: a detail page may
     # publish a different JSON-LD @type than the listing that links to it, and
     # porting the listing parser to it returns zero rows in silence.
     "https://www.sleepnumber.com/products/i8",
@@ -96,7 +96,7 @@ _CRED_RE = re.compile(r"://[^/@\s]+:[^/@\s]+@")
 
 def mask(url):
     """Strip credentials from a URL, keeping host and port — which exit was
-    used is the point of the log and is not the secret (CLAUDE.md §8)."""
+    used is the point of the log and is not the secret."""
     return _CRED_RE.sub("://***:***@", url or "")
 
 
@@ -106,7 +106,7 @@ def _jsonld_blocks(soup):
     The count may be ZERO and that is a real answer, not a failure: this
     family has measured zero on Amazon's search pages and on Transfermarkt
     entirely, and in that case the primary extraction path has to be the
-    site's own data attribute instead (§4).
+    site's own data attribute instead.
     """
     out = []
     for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
@@ -128,7 +128,7 @@ def _jsonld_blocks(soup):
     return out
 
 
-# What the front end might be calling. §21: grep a dump for these in the same
+# What the front end might be calling. Grep a dump for these in the same
 # breath as counting JSON-LD, then try the endpoint from a bare shell — on BBB
 # that one request found an UNGATED JSON API behind a fully gated HTML site.
 _STATE_HINTS = (
@@ -171,7 +171,7 @@ def report(url, status, body, headers):
 
     # Which URL shapes repeat. An anchor for extraction is a URL PATTERN, never
     # a CSS class: classes are build-generated hashes that churn, URLs are a
-    # contract with search engines (§4).
+    # contract with search engines.
     paths = [a["href"] for a in soup.find_all("a", href=True)]
     seg = {}
     for p in paths:
@@ -217,7 +217,7 @@ def main(argv=None):
                              allow_redirects=True)
         except requests.RequestException as exc:
             # requests puts the FULL URL, query string included, into the text
-            # of its exceptions — mask before printing (§8).
+            # of its exceptions — mask before printing.
             print(f"\n=== {mask(url)}\n    FAILED: "
                   f"{_CRED_RE.sub('://***:***@', str(exc))}")
             continue

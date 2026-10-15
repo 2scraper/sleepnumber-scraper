@@ -82,13 +82,14 @@ history needs a decision, not a red check on every push.
 
 Then the rest of the presentation, in the order that matters:
 
-1. `python3 smoke_test.py` green, and the canary dispatched at least once —
-   including its SKIP branch, which is what runs when no `SLEEPNUMBER_PROXY`
-   secret is set. A GitHub runner is a datacentre address, and every URL on
-   this site refuses those with a CloudFront 403, so without a residential
-   exit the canary skips green with a notice rather than going red every day.
-2. The repo description, homepage and topics set (see the family notes on
-   what those should say).
+1. `python3 smoke_test.py` green, and the canary dispatched at least once
+   with a `SLEEPNUMBER_PROXY` secret set. A GitHub runner is a datacentre
+   address, and every URL on this site refuses those with a CloudFront 403,
+   so without a residential exit the canary FAILS with an error naming the
+   missing secret — it does not skip green, because a green run that never
+   reached the site would read as a passing one.
+2. The repo description, homepage and topics set: a description carrying
+   the words people search for, a homepage, and topics.
 3. Only then the row in the org profile README — and check it with an
    ANONYMOUS request rather than your own logged-in browser. A row pointing
    at a private repo is a 404 for every visitor, which costs more trust than

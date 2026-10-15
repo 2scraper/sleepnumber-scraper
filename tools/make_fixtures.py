@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS RATHER THAN A HAND-WRITTEN FIXTURE
 --------------------------------------------------
-CLAUDE.md is firm that fixtures come from real captures, and firm again that
+The rules here are firm that fixtures come from real captures, and firm again that
 a trimmed fixture must be verified to parse identically to the untrimmed
 original before it is committed. Both are awkward here, for a reason
 specific to this site:
@@ -178,7 +178,7 @@ def main(argv=None):
     route = next(k for k in data if k.startswith("routes/categories"))
     picked = [_trim_product(p, args.variants) for p in products[:args.products]]
     # total_results is RE-STATED for the number of products kept, not copied
-    # from the full capture. CLAUDE.md §26: a fixture assembled from a trimmed
+    # from the full capture. a fixture assembled from a trimmed
     # capture can claim what no response says — and this one did, asserting 7
     # products while holding 2, which made a correct parse look like a
     # five-product shortfall the moment anything compared the two.
@@ -220,7 +220,7 @@ def main(argv=None):
     out["detail_html"] = dfixture
 
     # ---- what the parser should produce from each, pinned as VALUES ----
-    # §10: assert values on real fixtures, not coverage. A column can be 100%
+    # Assert values on real fixtures, not coverage. A column can be 100%
     # populated and entirely wrong — amazon-scraper shipped 445279961 as a
     # review count on every row while its coverage check read 100%.
     for key, (fx, url) in {
@@ -239,7 +239,7 @@ def main(argv=None):
     # discount — so a fixture built only from it cannot exercise the guard
     # that nulls `original_price` when `regular` merely equals `sale`. That
     # gap was found by a CONTROL: removing the guard left the suite green,
-    # which is the §22 failure where a control proves nothing. Sheets are
+    # which is the failure where a control proves nothing. Sheets are
     # mostly not on sale (13 of 211 rows discounted), so one product from
     # there gives the check something to actually fail on.
     sheets = capture("sheets-pillowcases", exclude=("page",))
@@ -276,7 +276,7 @@ def main(argv=None):
     # ---- the site's REAL 404, and a REAL landing page ----
     # Both were classified wrongly by an earlier version of this parser, and
     # both were invisible to the suite because the suite tested a page this
-    # author invented instead. §21: a guard is only as good as the fixture it
+    # author invented instead. A guard is only as good as the fixture it
     # runs against, and the fixture that matters is the one fetched the way a
     # real run fetches.
     nf = capture("products_i8")

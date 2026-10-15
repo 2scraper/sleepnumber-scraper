@@ -67,8 +67,8 @@ _PLACEHOLDERS = {
 # A literal-only check reported both of those as CONFIGURED, so `cp
 # .env.example .env` followed by a run connected to cb.2captcha.com with the
 # string `{login}-zone-…` as its username and got a 401 — a confusing failure
-# a long way from its cause, which is precisely what §3's rule exists to
-# prevent. Any `{…}` left in a value means the line was never filled in.
+# a long way from its cause, which is precisely what reading placeholders as
+# unset exists to prevent. Any `{…}` left in a value means the line was never filled in.
 _BRACED_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 _loaded_from = None
@@ -205,7 +205,7 @@ def _dests_given_on_argv(dests, argv=None):
     both first-class, and switching between them is routine rather than
     exceptional.
 
-    Scanning argv is the smallest fix that keeps §3's precedence intact --
+    Scanning argv is the smallest fix that keeps the precedence intact --
     explicit flag, then exported variable, then `.env`, then default -- with
     "explicit" now meaning what the caller typed rather than what happens to
     be truthy.

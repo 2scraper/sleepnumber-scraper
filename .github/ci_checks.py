@@ -85,7 +85,7 @@ CREDENTIAL_ALLOWED = (
     # pasted while debugging. An allowlist entry would have switched the
     # check off exactly there. A sibling repo's copy of this script FAILED ON
     # ITS OWN MAIN for the opposite reason: its fixtures were neither
-    # allowlisted nor written this way (§17).
+    # allowlisted nor written this way.
     # A PAST blob of smoke_test.py held the masking fixture as a complete
     # literal, `ws://user:secret@cb.2captcha.com:9222`. The current file
     # builds it by concatenation so the scan stays live on that file, but a
@@ -119,7 +119,24 @@ HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
                  "checksum")
 
-SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
+# `.json` included: committed fixtures and samples, and a capture dumped
+# beside the scripts, are where a front-end key would arrive. `.csv` for the
+# same reason.
+SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example",
+                    ".json", ".csv", ".toml", ".cfg", ".ini")
+
+
+def _is_scanned_name(path):
+    """A file of a scanned type, or a renamed copy of `.env`.
+
+    `.env.bak`, `.env.local`, `.env.save` — the way people actually rename a
+    working `.env` — are untracked and ignored by git, and exactly where a
+    live key sits one `git add -f` away from a commit. Their suffixes are
+    arbitrary, so they are matched by NAME. `.env` itself is deliberately
+    not read: it is meant to hold the user's real key, and a suite that
+    fails on every configured checkout teaches people to ignore it.
+    """
+    return path.suffix in SCANNED_SUFFIXES or path.name.startswith(".env.")
 
 
 # A directory holding `pyvenv.cfg` is a virtualenv, whatever it is called.
@@ -130,7 +147,7 @@ SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
 # into pip's vendored code and flags a 32-hex string in `_elffile.py` as
 # key-shaped. Correct about the string, wrong about the file — and it is the
 # FIRST thing a new user sees from `python3 smoke_test.py`. A guard people
-# have to argue with is one they learn to suppress (CLAUDE.md §22).
+# have to argue with is one they learn to suppress.
 #
 # Deliberately NOT a narrowing of what gets scanned: an untracked file is
 # still read, because a key pasted into a scratch file beside the scripts is
@@ -159,10 +176,14 @@ def _is_in_virtualenv(path):
 
 def scanned_files():
     for path in sorted(REPO.rglob("*")):
-        if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
+        if not path.is_file() or not _is_scanned_name(path):
             continue
+        # RELATIVE parts only. The absolute path includes every ancestor, so
+        # a clone made under a directory that happens to be called `venv`
+        # skipped every file and reported "nothing credential-shaped" from a
+        # scan of zero files (reproduced 2026-10-14).
         if any(part in {".git", "__pycache__", ".venv", "venv"}
-               for part in path.parts):
+               for part in path.relative_to(REPO).parts):
             continue
         if _is_in_virtualenv(path):
             continue
@@ -254,6 +275,11 @@ def secret_check():
                 failed.append(f"{rel}:{lineno} contains {match[:6]}… — a "
                               f"32-char hex string, the shape of a 2captcha key")
 
+    if not scanned:
+        # A scan that read nothing has proved nothing, and must not print
+        # the same line as a clean one.
+        failed.append("0 files scanned — the scan's own exclusions swallowed "
+                      "the repository, so nothing was checked")
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped")
     return failed
@@ -332,8 +358,8 @@ def history_check():
 def published_check():
     """Banned wording on the surfaces GitHub publishes, not just in files.
 
-    CLAUDE.md §21: the suite scans repo FILES, and a GitHub description is
-    not a file. The phrase §12 bans reached at least two public repo
+    The suite scans repo FILES, and a GitHub description is
+    not a file. A banned phrase reached at least two public repo
     descriptions in this family for exactly that reason — the check existed,
     passed, and could not see the thing that was wrong.
 
@@ -385,7 +411,7 @@ def published_check():
     topics = [t["name"] for t in meta.get("repositoryTopics") or []]
     # Say what was actually read. A check that prints nothing on success is
     # indistinguishable from a check that silently did nothing, which is the
-    # failure mode §22 keeps finding — and this one has three separate ways
+    # failure mode that keeps recurring — and this one has three separate ways
     # to come back empty (no gh, no network, an unauthenticated token).
     print(f"ok       description: {len(surfaces['description'].split())} words, "
           f"{len(topics)} topics, homepage {surfaces['homepage'] or '(none)'}")

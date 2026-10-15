@@ -41,7 +41,9 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.tx
 # not a longer timeout.
 
 # Every module playwright_scraper.py imports, transitively, plus diff_runs.py
-# as a useful companion in the same image. smoke_test.py checks this list
+# as a useful companion and http_scraper.py, the browserless engine the
+# README recommends (its imports are a subset of the same list); run it with
+# `docker run --entrypoint python IMAGE http_scraper.py ...`. smoke_test.py checks this list
 # against the entrypoint's real import graph by walking its imports: three
 # repos in this family shipped an image missing a module the engine imports
 # at module level, so it died with ModuleNotFoundError on every invocation
@@ -49,7 +51,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.tx
 # because nothing built it.
 COPY captcha_solver.py env_config.py fingerprint_client.py output_writer.py \
      page_flow.py playwright_scraper.py product_parser.py proxy_pool.py \
-     scraper_api_client.py diff_runs.py ./
+     scraper_api_client.py diff_runs.py http_scraper.py ./
 
 # No test suite, no fixtures, no .github/ and no .env — see .dockerignore.
 ENTRYPOINT ["python", "playwright_scraper.py"]

@@ -161,7 +161,7 @@ _ENQUEUE_RE = re.compile(r'streamController\.enqueue\("((?:[^"\\]|\\.)*)"\)')
 # Block / challenge detection
 # ---------------------------------------------------------------------------
 # EVERY candidate below was counted on pages this repo knows are good before
-# being kept or dropped (CLAUDE.md §18), because a marker that matches a
+# being kept or dropped, because a marker that matches a
 # served page is worse than no marker. The counts, taken 2026-09-17 over four
 # served pages, two of the site's own 404s and two CloudFront refusals (one
 # fetched with an HTTP client, one read out of a browser DOM):
@@ -180,7 +180,7 @@ _ENQUEUE_RE = re.compile(r'streamController\.enqueue\("((?:[^"\\]|\\.)*)"\)')
 #  * Only CloudFront's own refusal wording discriminates, so that is the
 #    whole list. Nothing from any bot-management vendor appears on a refusal
 #    this site produces, and carrying those markers "just in case" is the
-#    dead code §18 warns about.
+#    dead code: it looks load-bearing and never fires.
 #  * `recaptcha` and `captcha` occur exactly once on EVERY page, good and
 #    bad alike — the site ships a reCAPTCHA loader in its base template. A
 #    detector keying on either would report every page in the catalogue as
@@ -216,7 +216,7 @@ SITE_ASSET_MARKERS: Tuple[str, ...] = (
 # It is told apart by its own wording plus the absence of any product in the
 # payload, never by size.
 # MEASURED, not guessed, and the first version of this list was WRONG —
-# which is the whole argument for counting (§18). It read `<title>not found`
+# which is the whole argument for counting. It read `<title>not found`
 # and `page not found`, and NEITHER occurs on the page this site actually
 # serves for a missing product: `/products/i8` comes back with
 # `<title>Sleep Number</title>`, so the list matched nothing and a 404 was
@@ -531,7 +531,7 @@ def _discount_pct(price: Optional[float], original: Optional[float]) -> Optional
 def jsonld_nodes(html: str) -> List[dict]:
     """Every JSON-LD node on the page, `@graph` flattened.
 
-    Tolerates the shapes CLAUDE.md §4 lists as legal-and-crashing: a list at
+    Tolerates JSON-LD shapes that are legal and crash a naive parser: a list at
     the top level, a null `offers`, a non-dict inside a list, products under
     `@graph` rather than `itemListElement`.
     """
@@ -838,7 +838,7 @@ def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
     #    cloudfront` (or Hit/RefreshHit) and carries `server: Fly/…`, while a
     #    refusal answers `x-cache: Error from cloudfront` with `server:
     #    CloudFront` — measured on both. This runs FIRST because it is the
-    #    one signal the body cannot forge; §8's "the status code may be the
+    #    one signal the body cannot forge; the "the status code may be the
     #    only signal a block gives you", one layer up.
     #
     #    `x-amzn-waf-action` is checked too and has never been observed on
@@ -990,7 +990,7 @@ def page_url(url: str, page: int) -> str:
     200 with page ONE's ten products, and the payload's own `page` still
     reads 1. So this function builds the conventional URL and the ENGINE
     decides whether to trust it, by comparing what came back against what it
-    already has — the data-based terminating condition CLAUDE.md §7 requires.
+    already has — a terminating condition based on data rather than on markup.
     It is not deleted because the convention is what the site would use if it
     ever paginated, and because `pagination_is_addressable` needs something
     to compare the site's own next-link against.
