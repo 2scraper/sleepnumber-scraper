@@ -1,6 +1,6 @@
 name: canary
 
-# One real run a day against www.sleepnumber.com, and the only workflow in
+# One real run a week (Mondays; every run bills the proxy) against www.sleepnumber.com, and the only workflow in
 # this repo that touches the site. Everything else is offline (see tests.yml).
 #
 # WHY THIS CANARY NEEDS A PROXY SECRET, AND FAILS WITHOUT ONE
@@ -48,7 +48,7 @@ name: canary
 
 on:
   schedule:
-    - cron: "23 11 * * *"        # 06:23 US eastern, off-peak for a US shop
+    - cron: "23 11 * * 1"        # Mondays 06:23 US eastern, off-peak for a US shop; weekly because every run bills the proxy
   workflow_dispatch:
 
 permissions:
@@ -120,7 +120,7 @@ jobs:
             [ "$code" -ne 0 ] && worst=$code
           done
           # And the SAME category through the browserless transport. This is
-          # the family's "every engine agrees" contract under daily test
+          # the family's "every engine agrees" contract under weekly test
           # rather than asserted: it costs about two seconds, and it is the
           # check that would notice if the site started painting its grid
           # client-side, because then the HTTP path would come back empty

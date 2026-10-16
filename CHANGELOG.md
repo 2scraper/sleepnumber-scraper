@@ -11,6 +11,11 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary bills the `SLEEPNUMBER_PROXY` exit, so it now runs weekly
+  (Mondays 11:23 UTC) instead of daily; a manual dispatch still runs it.
+
 ## [0.3.0] — 2026-10-16
 
 > **Behaviour changes:**
