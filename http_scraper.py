@@ -84,13 +84,15 @@ from typing import List, Optional
 
 import requests
 
-from output_writer import dedupe_by_key, finish_run, SOURCE_DEFAULT
+from output_writer import (dedupe_by_key, finish_run, finish_without_fetch,
+                           SOURCE_DEFAULT)
 import page_flow
 from product_parser import (parse_products, detect_bot_challenge,
                             is_supported_url, normalise_url,
                             category_url, product_url, SITE_ASSET_MARKERS)
 from proxy_pool import from_args as proxy_pool_from_args, mask, ROTATE_MODES, ProxyError
 import env_config
+import proxy_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("http_scraper")
@@ -293,6 +295,16 @@ def scrape(args) -> int:
     stop_reason = "single_page_mode" if args.mode not in page_flow.PAGINATED_MODES else "completed"
 
     pool = proxy_pool_from_args(args)
+
+    # One request through the proxy before the first page request: a 407 or 402
+    # from the gateway ends the run here, in seconds, instead of surfacing
+    # as a ProxyError on every retry.
+    refused = proxy_check.gate(pool, args.url)
+    if refused:
+        return finish_without_fetch(
+            args.out, stop_reason=refused.stop_reason,
+            pages_requested=args.pages, start_url=args.url, mode=args.mode,
+            source=SOURCE_DEFAULT)
 
     with requests.Session() as session:
         first = _fetch_one_page(session, args, pool, 1, args.url)

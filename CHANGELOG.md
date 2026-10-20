@@ -11,6 +11,38 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+> **Behaviour changes.** (1) A run through a proxy now makes one pre-check
+> request before its first page request, in `http_scraper.py` and all three
+> browser engines. A proxy that answers **HTTP 407** or **402** ends the run
+> with **exit 5** and `<out>.latest_attempt.meta.json` (`status: failed`,
+> `stop_reason: proxy_auth_failed` / `proxy_balance_exhausted`) instead of
+> failing every retry. (2) Through a local proxy, the browser engines **no
+> longer download** images, video/audio or fonts; `--load-media` (or
+> `SLEEPNUMBER_LOAD_MEDIA=1`) restores them. Runs without a proxy, over
+> `--cdp-endpoint`, and the HTML-only `http_scraper.py` fetch are otherwise
+> unchanged.
+
+### Added
+
+- `proxy_check.py`: the proxy pre-check (one CONNECT plus `HEAD /robots.txt`
+  on www.sleepnumber.com, no third-party service), shared by
+  `http_scraper.py` and the browser engines, plus media blocking for the
+  three browser engines. The 407 message names `SLEEPNUMBER_PROXY` and says
+  the gateway refused the credential (or the traffic balance is exhausted);
+  a 402 says the proxy traffic/balance is exhausted. Neither prints the
+  credential. A proxy that does not answer keeps the existing retry
+  behaviour.
+- `--load-media` on the three browser engines, and `SLEEPNUMBER_LOAD_MEDIA`
+  in `.env.example`.
+- Offline checks:
+  - a stub proxy that answers 407/402/200 or nothing;
+  - `http_scraper.py` and each engine driven to exit 5 on a 407, with no
+    page request and no browser;
+  - the attempt sidecar;
+  - the Playwright route handler, the pyppeteer Fetch patterns and the
+    Selenium blocked-URL list;
+  - when each engine installs blocking.
+
 ### Changed
 
 - CI only: the canary bills the `SLEEPNUMBER_PROXY` exit, so it now runs weekly
