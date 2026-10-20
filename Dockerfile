@@ -51,7 +51,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.tx
 # because nothing built it.
 COPY captcha_solver.py env_config.py fingerprint_client.py output_writer.py \
      page_flow.py playwright_scraper.py product_parser.py proxy_pool.py \
-     scraper_api_client.py diff_runs.py http_scraper.py ./
+     scraper_api_client.py diff_runs.py http_scraper.py proxy_check.py ./
 
 # No test suite, no fixtures, no .github/ and no .env — see .dockerignore.
 ENTRYPOINT ["python", "playwright_scraper.py"]

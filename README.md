@@ -458,6 +458,39 @@ address and does not change between attempts, so retrying buys a second copy
 of a certainty and is billed for it. A challenge page still retries, because
 that one can clear.
 
+### Proxy traffic savers
+
+A proxy is billed by traffic, so a run through `--proxy` / `--proxy-file` /
+`SLEEPNUMBER_PROXY` does two things to avoid paying for bytes it does not
+use:
+
+- **One pre-check before the first page request, in every entry point**
+  (`http_scraper.py` and the three browser engines). It is a CONNECT through
+  the proxy and a `HEAD /robots.txt` on www.sleepnumber.com. Chromium
+  reports a proxy's HTTP 407 as a navigation timeout, and `requests` reports
+  it inside a `ProxyError`, so a wrong or exhausted credential used to spend
+  every retry before ending as `page_load_timeout`. Now a **407** (the
+  gateway refused the credential, or the traffic balance is exhausted) or a
+  **402** (proxy traffic/balance exhausted) ends the run in seconds with
+  **exit 5** and writes `<out>.latest_attempt.meta.json` saying
+  `status: failed`, `stop_reason: proxy_auth_failed` (or
+  `proxy_balance_exhausted`). Any previous output and its `.meta.json` are
+  left as they were. The message names the variable and never prints the
+  credential. If the proxy does not answer at all, the run goes on as
+  before. No pre-check runs without a proxy or with `--cdp-endpoint`.
+- **Images, video/audio and web fonts are not downloaded** by the browser
+  engines through a local proxy. Playwright aborts them by resource type,
+  pyppeteer through CDP's Fetch domain, and Selenium by file extension with
+  CDP `Network.setBlockedURLs`. The rows come from the page's inline
+  payload, which is why `http_scraper.py` (which never loads a sub-resource)
+  produces the same rows. `http_scraper.py` fetches HTML only, so blocking
+  does not apply to it. On 2026-10-20 a run with no proxy from a datacentre
+  got the same 923-byte CloudFront "Request blocked" 403 with media loaded
+  and with media blocked, so the refusal does not depend on what the page
+  loads; a served comparison needs a residential exit and was not made.
+  `--load-media` (or `SLEEPNUMBER_LOAD_MEDIA=1`) loads media. Without a
+  proxy, or over `--cdp-endpoint`, nothing is blocked.
+
 ### Install exactly one engine
 
 `playwright` and `pyppeteer` pin mutually unsatisfiable `pyee` versions, and
@@ -484,7 +517,9 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   never replaced with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes:** `0` ok · `1` crash · `2` bad usage · `3` blocked ·
   `4` zero products · `5` the content was never obtained (a remote API
-  error, a navigation timeout, a dead proxy) · `6` partial.
+  error, a navigation timeout, a dead proxy, or a proxy that refused the
+  credential or the balance before the run began: `stop_reason:
+  proxy_auth_failed` / `proxy_balance_exhausted`) · `6` partial.
 - **`<out>.meta.json` beside every run that WRITES ROWS**, recording
   `status`, `stop_reason`, `transport`, which pages failed by number, and the
   site's own arithmetic about the result set — `total_results`, `per_page`,
@@ -504,7 +539,9 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   "per run" and it meant "per run that writes rows". If you want a machine-
   readable record of attempts including failures, read the exit code and keep
   your own log; this repo will not put a contradicting file next to good
-  data.
+  data. The one exception is a run the proxy pre-check stopped (see "Proxy
+  traffic savers"): it writes `<out>.latest_attempt.meta.json`, a file with
+  its own name, and leaves `<out>.meta.json` alone.
 - **An empty CSV still carries its header.**
 - **Writes are atomic.** Each file is written beside its target and renamed
   over it, so a crash or a full disk mid-write leaves the previous file
@@ -544,7 +581,7 @@ Precedence, highest first: explicit flag → exported environment variable →
 ## Tests
 
 ```bash
-python3 smoke_test.py -v      # 59 checks, no network, no engine needed
+python3 smoke_test.py -v      # 112 checks, no network, no engine needed
 pytest                        # the same checks, wrapped
 ```
 

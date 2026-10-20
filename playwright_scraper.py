@@ -79,11 +79,13 @@ from product_parser import (parse_products, detect_page_state, page_url,
                             category_url, product_url, CATEGORY_URL,
                             CANONICAL_HOST)
 from output_writer import (dedupe_by_key, finish_run, RemoteAPIError,
-                           EXIT_REMOTE_API_ERROR, SOURCE_DEFAULT)
+                           EXIT_REMOTE_API_ERROR, SOURCE_DEFAULT,
+                           finish_without_fetch)
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, to_playwright, mask,
                         ROTATE_MODES, ProxyError, ProxyPool)
 import env_config
+import proxy_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("playwright_scraper")
@@ -188,6 +190,8 @@ def _launch_local(pw, args, pool):
     context = browser.new_context(**ctx_kwargs)
     if init_script:
         context.add_init_script(init_script)
+    if proxy_check.block_media(args, pool, remote=False):
+        proxy_check.install_playwright(context)
     return browser, context, context.new_page()
 
 
@@ -847,6 +851,16 @@ def scrape(args) -> int:
                         "its whole lifetime by design, "
                         "rotated only per WORKER, not per page.")
 
+    # One request through the proxy before a browser exists: a 407 or 402
+    # from the gateway ends the run here, in seconds, instead of surfacing
+    # as a navigation timeout after every retry.
+    refused = proxy_check.gate(pool, args.url)
+    if refused:
+        return finish_without_fetch(
+            args.out, stop_reason=refused.stop_reason,
+            pages_requested=args.pages, start_url=args.url, mode=args.mode,
+            source=SOURCE_DEFAULT)
+
     with sync_playwright() as pw:
         session = _BrowserSession(pw, args, pool,
                                   remote=bool(args.cdp_endpoint)).open()
@@ -1077,6 +1091,7 @@ def parse_args():
     p.add_argument("--captcha-api", choices=["v2", "v1"], default="v2")
     p.add_argument("--solve-captcha", choices=["when-blocked", "always"], default="when-blocked")
     p.add_argument("--min-score", type=float, default=0.7)
+    proxy_check.add_media_flags(p)
     p.add_argument("--cdp-endpoint", default=None,
                    help="Connect to an already-running browser over CDP, "
                         "e.g. ws://user:pass@host:port — the Scraping "

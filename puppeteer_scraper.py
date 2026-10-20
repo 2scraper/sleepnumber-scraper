@@ -51,11 +51,13 @@ from product_parser import (parse_products, detect_page_state, page_url,
                             category_url, product_url, CATEGORY_URL,
                             CANONICAL_HOST)
 from output_writer import (dedupe_by_key, finish_run, RemoteAPIError,
-                           EXIT_REMOTE_API_ERROR, SOURCE_DEFAULT)
+                           EXIT_REMOTE_API_ERROR, SOURCE_DEFAULT,
+                           finish_without_fetch)
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
                         ProxyError, split_credentials)
 import env_config
+import proxy_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("puppeteer_scraper")
@@ -238,6 +240,8 @@ class _Session:
         if credentials:
             self.bridge.run(self.page.authenticate(
                 {"username": credentials[0], "password": credentials[1]}))
+        if proxy_check.block_media(self.args, self.pool, remote=False):
+            self.bridge.run(proxy_check.install_pyppeteer(self.page))
         if self.args.fingerprint:
             self._apply_fingerprint()
         return self
@@ -614,6 +618,16 @@ def scrape(args) -> int:
                        "page fetching (--mode transfers) is implemented in "
                        "playwright_scraper.py. Running sequentially.")
 
+    # One request through the proxy before a browser exists: a 407 or 402
+    # from the gateway ends the run here, in seconds, instead of surfacing
+    # as a navigation timeout after every retry.
+    refused = proxy_check.gate(pool, args.url)
+    if refused:
+        return finish_without_fetch(
+            args.out, stop_reason=refused.stop_reason,
+            pages_requested=args.pages, start_url=args.url, mode=args.mode,
+            source=SOURCE_DEFAULT)
+
     bridge = _AsyncBridge()
     session = _Session(bridge, args, pool).open()
     try:
@@ -778,6 +792,7 @@ def parse_args():
     p.add_argument("--captcha-api", choices=["v2", "v1"], default="v2")
     p.add_argument("--solve-captcha", choices=["when-blocked", "always"], default="when-blocked")
     p.add_argument("--min-score", type=float, default=0.7)
+    proxy_check.add_media_flags(p)
     p.add_argument("--cdp-endpoint", default=None,
                    help="Connect to an existing browser, e.g. "
                         "ws://user:pass@host:port — the Scraping Browser "
