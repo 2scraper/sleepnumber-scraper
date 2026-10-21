@@ -459,6 +459,16 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
 ATTEMPT_META_SUFFIX = ".latest_attempt.meta.json"
 
 
+def write_attempt_meta(out_prefix: str, meta: dict) -> str:
+    """Write `<out>.latest_attempt.meta.json`: this attempt, whatever it got."""
+    path = f"{out_prefix}{ATTEMPT_META_SUFFIX}"
+    with _atomic(path) as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    print(f"[+] Wrote attempt metadata -> {path} (status={meta.get('status')}, "
+          f"stop_reason={meta.get('stop_reason')})")
+    return path
+
+
 def finish_without_fetch(out_prefix: str, *, stop_reason: str,
                          pages_requested: int, start_url: str,
                          mode: str = "listing", source: str = SOURCE_DEFAULT,
@@ -475,11 +485,7 @@ def finish_without_fetch(out_prefix: str, *, stop_reason: str,
                     pages_requested=pages_requested, pages_completed=0,
                     start_url=start_url, final_url=start_url, products=0,
                     mode=mode, source=source)
-    path = f"{out_prefix}{ATTEMPT_META_SUFFIX}"
-    with _atomic(path) as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-    print(f"[+] Wrote attempt metadata -> {path} (status=failed, "
-          f"stop_reason={stop_reason})")
+    write_attempt_meta(out_prefix, meta)
     print(f"[!] Failed run: nothing was fetched ({stop_reason}). "
           f"{message} Any previous output and its .meta.json are untouched.")
     return EXIT_FETCH_FAILED
@@ -658,17 +664,24 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
               stats=write_stats)
     wrote_output = bool(rows) or allow_empty
 
+    status = "complete" if (rows and complete) else (
+        "partial" if rows else "failed")
+    meta = run_meta(
+        status=status, stop_reason=stop_reason,
+        pages_requested=pages_requested, pages_completed=pages_completed,
+        pages_failed=pages_failed, mode=mode, source=source,
+        start_url=start_url, final_url=final_url, products=len(rows),
+        # Housekeeping merged UNDER the caller's extra: a collision
+        # must never drop site data in favour of a write statistic.
+        extra=({**write_stats, **(extra or {})} if write_stats else extra))
     if wrote_output:
-        status = "complete" if (rows and complete) else (
-            "partial" if rows else "failed")
-        write_run_meta(out_prefix, run_meta(
-            status=status, stop_reason=stop_reason,
-            pages_requested=pages_requested, pages_completed=pages_completed,
-            pages_failed=pages_failed, mode=mode, source=source,
-            start_url=start_url, final_url=final_url, products=len(rows),
-            # Housekeeping merged UNDER the caller's extra: a collision
-            # must never drop site data in favour of a write statistic.
-            extra=({**write_stats, **(extra or {})} if write_stats else extra)))
+        write_run_meta(out_prefix, meta)
+    if extra and "proxy_bytes" in extra:
+        # A metered (proxied) run also records itself in the attempt
+        # sidecar, every time: a run that wrote no rows leaves no
+        # `<out>.meta.json`, and what it spent through the proxy must still
+        # be on disk somewhere.
+        write_attempt_meta(out_prefix, meta)
 
     if not rows:
         # Nothing gathered at all, and WHY decides the code. The three

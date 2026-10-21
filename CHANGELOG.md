@@ -20,9 +20,35 @@ nobody discovers it from a bill or a broken cron job.
 > longer download** images, video/audio or fonts; `--load-media` (or
 > `SLEEPNUMBER_LOAD_MEDIA=1`) restores them. Runs without a proxy, over
 > `--cdp-endpoint`, and the HTML-only `http_scraper.py` fetch are otherwise
-> unchanged.
+> unchanged. (3) A run through a local proxy now **stops at 10 MB of proxy
+> traffic** by default (`--proxy-budget-mb`, `0` = no cap), in every entry
+> point: it keeps its rows and exits **6** (**5** with none) with
+> `stop_reason: proxy_budget_exceeded`, and it always writes
+> `<out>.latest_attempt.meta.json`.
 
 ### Added
+
+- `proxy_meter.py`: per-run proxy traffic meter and budget, in the three
+  browser engines and `http_scraper.py`, only through a local proxy.
+  Playwright sums `request.sizes()`; pyppeteer and Selenium count CDP
+  `Network.loadingFinished.encodedDataLength` plus each request's own size;
+  `http_scraper.py` counts every response hop and its request. Over budget,
+  Playwright aborts new requests in a route, pyppeteer/Selenium block every
+  URL over CDP, and every entry point stops before its next request; the
+  `--concurrency` workers share one budget. New sidecar fields
+  `proxy_bytes`, `proxy_budget_bytes`, `proxy_budget_exceeded`; a closing
+  log line `Proxy traffic: X.X MB of Y MB budget`. `--proxy-budget-mb` and
+  `SLEEPNUMBER_PROXY_BUDGET_MB` (in `.env.example`).
+- CI only: every canary run passes `--proxy-budget-mb 10`, its proxy
+  traffic goes to the step summary, and the job fails with
+  `::error::stopped: proxy budget 10 MB exceeded` when a run hit the cap
+  (`.github/proxy_traffic.py`).
+- Offline checks: the meter against known CDP and Playwright sizes,
+  `http_scraper.py` through a byte-counting stub proxy, the sidecars and
+  exit codes over budget, every engine driven past the budget, concurrent
+  workers sharing it, the canary step and its summary script. An opt-in
+  real-browser check (`PROXY_METER_BROWSER=1`) compares each driver's count
+  with a stub proxy's.
 
 - `proxy_check.py`: the proxy pre-check (one CONNECT plus `HEAD /robots.txt`
   on www.sleepnumber.com, no third-party service), shared by

@@ -58,6 +58,7 @@ from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
                         ProxyError, split_credentials)
 import env_config
 import proxy_check
+import proxy_meter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("puppeteer_scraper")
@@ -242,6 +243,8 @@ class _Session:
                 {"username": credentials[0], "password": credentials[1]}))
         if proxy_check.block_media(self.args, self.pool, remote=False):
             self.bridge.run(proxy_check.install_pyppeteer(self.page))
+        self.bridge.run(proxy_meter.install_pyppeteer(
+            self.page, proxy_meter.of(self.args)))
         if self.args.fingerprint:
             self._apply_fingerprint()
         return self
@@ -430,6 +433,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         load_failed = False
         resp_status, resp_headers = None, None
         for attempt in range(1, args.retries + 1):
+            proxy_meter.check(args)
             try:
                 # The Response is KEPT so the classifier sees the status and
                 # headers, as it does in the Playwright engine. `goto` can
@@ -627,6 +631,7 @@ def scrape(args) -> int:
             args.out, stop_reason=refused.stop_reason,
             pages_requested=args.pages, start_url=args.url, mode=args.mode,
             source=SOURCE_DEFAULT)
+    meter = proxy_meter.start(args, pool, remote=bool(getattr(args, "cdp_endpoint", None)))
 
     bridge = _AsyncBridge()
     session = _Session(bridge, args, pool).open()
@@ -689,9 +694,16 @@ def scrape(args) -> int:
                         pool.advance(f"per-page rotation after page {page_num}")
                         session.relaunch()
                     time.sleep(args.delay)
+    except proxy_meter.ProxyBudgetExceeded as e:
+        logger.error("Stopping: %s. The pages already gathered are kept.", e)
     finally:
         session.close()
         bridge.close()
+
+    # Over budget is the stop reason whatever the loop concluded: the
+    # requests after the cap were refused, so nothing after it was read.
+    if meter is not None and meter.exceeded:
+        stop_reason, blocked = proxy_meter.STOP_BUDGET_EXCEEDED, False
 
     all_rows = []
     merged_seen = set()
@@ -738,6 +750,8 @@ def scrape(args) -> int:
                 len({r.product_id for r in all_rows if r.product_id}), missing)
             stop_reason = "parser_incomplete"
             arithmetic["products_missing"] = missing
+
+    arithmetic = proxy_meter.finish(args, arithmetic) or {}
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       extra=arithmetic or None,
@@ -793,6 +807,7 @@ def parse_args():
     p.add_argument("--solve-captcha", choices=["when-blocked", "always"], default="when-blocked")
     p.add_argument("--min-score", type=float, default=0.7)
     proxy_check.add_media_flags(p)
+    proxy_meter.add_budget_flag(p)
     p.add_argument("--cdp-endpoint", default=None,
                    help="Connect to an existing browser, e.g. "
                         "ws://user:pass@host:port — the Scraping Browser "

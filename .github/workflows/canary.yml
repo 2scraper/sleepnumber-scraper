@@ -114,6 +114,7 @@ jobs:
               --category "$c" \
               --pages 3 \
               --format json \
+              --proxy-budget-mb 10 \
               --out "canary_$c" 2>&1 | tee -a canary.log
             code=${PIPESTATUS[0]}
             echo "$c exited $code"
@@ -128,6 +129,7 @@ jobs:
           python3 http_scraper.py \
             --category mattresses \
             --format json \
+            --proxy-budget-mb 10 \
             --out canary_http 2>&1 | tee -a canary.log
           http_code=${PIPESTATUS[0]}
           echo "http transport exited $http_code"
@@ -135,6 +137,20 @@ jobs:
           set -e
           echo "exit_code=$worst" >> "$GITHUB_OUTPUT"
           echo "The worst exit code across three categories and two transports was $worst."
+
+      - name: Proxy traffic of each run
+        # Every run meters what it sends through SLEEPNUMBER_PROXY and stops
+        # at --proxy-budget-mb 10. This puts each figure in the step summary
+        # and fails the job when any run hit the cap, so a page that has
+        # grown heavy is a red run rather than a quietly larger bill.
+        if: ${{ !cancelled() && env.HAVE_PROXY == 'true' }}
+        run: |
+          rc=0
+          for c in mattresses sheets-pillowcases furniture; do
+            python3 .github/proxy_traffic.py "live/$c" "canary_$c" || rc=1
+          done
+          python3 .github/proxy_traffic.py "live/http" canary_http || rc=1
+          exit $rc
 
       - name: Interpret the exit code
         if: env.HAVE_PROXY == 'true'

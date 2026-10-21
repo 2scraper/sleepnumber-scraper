@@ -93,6 +93,7 @@ from product_parser import (parse_products, detect_bot_challenge,
 from proxy_pool import from_args as proxy_pool_from_args, mask, ROTATE_MODES, ProxyError
 import env_config
 import proxy_check
+import proxy_meter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("http_scraper")
@@ -178,9 +179,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         response, last_error = None, None
         for attempt in range(1, args.retries + 1):
             logger.info("Fetching page %d: %s", page_num, url)
+            proxy_meter.check(args)
             try:
                 response = session.get(url, headers=HEADERS, timeout=args.timeout,
                                        allow_redirects=True)
+                # Every hop crossed the proxy: the redirects, then the page.
+                for hop in list(response.history) + [response]:
+                    proxy_meter.count_response(proxy_meter.of(args), hop)
                 break
             except _PROXY_ERRORS as exc:
                 # Named on the spot: "the exit is dead" and "the site is slow"
@@ -305,41 +310,51 @@ def scrape(args) -> int:
             args.out, stop_reason=refused.stop_reason,
             pages_requested=args.pages, start_url=args.url, mode=args.mode,
             source=SOURCE_DEFAULT)
+    meter = proxy_meter.start(args, pool)
 
-    with requests.Session() as session:
-        first = _fetch_one_page(session, args, pool, 1, args.url)
-        outcomes.append(first)
+    try:
+        with requests.Session() as session:
+            first = _fetch_one_page(session, args, pool, 1, args.url)
+            outcomes.append(first)
 
-        if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
-            blocked = first.blocked_by is not None
-        elif args.mode in page_flow.PAGINATED_MODES and args.pages > 1:
-            seen_keys.update(r.sku for r in first.rows if r.sku is not None)
-            planned = page_flow.plan_pages(first.html or "", first.final_url or args.url,
-                                           args.pages)
-            if not planned:
-                logger.info("The site says there is no page 2 — stopping here.")
-                stop_reason = "pagination_exhausted"
-            for page_num, url in enumerate(planned, start=2):
-                time.sleep(args.delay)
-                outcome = _fetch_one_page(session, args, pool, page_num, url)
-                outcomes.append(outcome)
-                if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
-                    blocked = outcome.blocked_by is not None
-                    break
-                fresh = sum(1 for r in outcome.rows
-                            if r.sku is None or r.sku not in seen_keys)
-                seen_keys.update(r.sku for r in outcome.rows if r.sku is not None)
-                if not fresh:
-                    # The terminating condition is DATA, never a selector and
-                    # never the ?page= parameter, which this site ignores.
-                    logger.info("Page %d added no sku not already seen — "
-                                "treating that as the end of the listing.", page_num)
-                    stop_reason = "no_new_products"
-                    break
+            if not first.ok:
+                stop_reason = ("page_load_timeout" if first.load_failed
+                               else f"blocked_{first.blocked_by}")
+                blocked = first.blocked_by is not None
+            elif args.mode in page_flow.PAGINATED_MODES and args.pages > 1:
+                seen_keys.update(r.sku for r in first.rows if r.sku is not None)
+                planned = page_flow.plan_pages(first.html or "", first.final_url or args.url,
+                                               args.pages)
+                if not planned:
+                    logger.info("The site says there is no page 2 — stopping here.")
+                    stop_reason = "pagination_exhausted"
+                for page_num, url in enumerate(planned, start=2):
+                    time.sleep(args.delay)
+                    outcome = _fetch_one_page(session, args, pool, page_num, url)
+                    outcomes.append(outcome)
+                    if not outcome.ok:
+                        stop_reason = ("page_load_timeout" if outcome.load_failed
+                                       else f"blocked_{outcome.blocked_by}")
+                        blocked = outcome.blocked_by is not None
+                        break
+                    fresh = sum(1 for r in outcome.rows
+                                if r.sku is None or r.sku not in seen_keys)
+                    seen_keys.update(r.sku for r in outcome.rows if r.sku is not None)
+                    if not fresh:
+                        # The terminating condition is DATA, never a selector and
+                        # never the ?page= parameter, which this site ignores.
+                        logger.info("Page %d added no sku not already seen — "
+                                    "treating that as the end of the listing.", page_num)
+                        stop_reason = "no_new_products"
+                        break
+
+    except proxy_meter.ProxyBudgetExceeded as e:
+        logger.error("Stopping: %s. The pages already gathered are kept.", e)
+
+    # Over budget is the stop reason whatever the loop concluded: the
+    # requests after the cap were refused, so nothing after it was read.
+    if meter is not None and meter.exceeded:
+        stop_reason, blocked = proxy_meter.STOP_BUDGET_EXCEEDED, False
 
     # Merge in PAGE order, not arrival order.
     all_rows: List = []
@@ -357,6 +372,7 @@ def scrape(args) -> int:
     if first_html and args.mode == "listing":
         arithmetic = page_flow.listing_arithmetic(first_html)
     arithmetic["transport"] = "http"
+    arithmetic = proxy_meter.finish(args, arithmetic)
 
     # Did we parse everything the SITE says is there? It counts products
     # while a row here is a size variant, so the comparison is on distinct
@@ -432,6 +448,7 @@ def parse_args():
     p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int, default=2,
                    help="When a page comes back refused, retry it from this "
                         "many OTHER exits before giving up. Needs a pool.")
+    proxy_meter.add_budget_flag(p)
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 rows were found.")
     p.add_argument("--dump-html", default=None, metavar="PATH",

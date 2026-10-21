@@ -52,6 +52,8 @@ py-modules = [
     "page_flow",
     "playwright_scraper",
     "product_parser",
+    "proxy_check",
+    "proxy_meter",
     "proxy_pool",
     "puppeteer_scraper",
     "scraper_api_client",
