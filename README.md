@@ -509,7 +509,7 @@ every finished or failed request; pyppeteer reads CDP
 `Network.loadingFinished.encodedDataLength` (bytes received, headers
 included) plus each request's line, headers and body from
 `Network.requestWillBeSent`; Selenium reads the same CDP events from
-chromedriver's performance log around every page load; `http_scraper.py`
+chromedriver's performance log around every page load; `http_scraper. Only `http(s)` requests and responses that came over the network are counted: Chrome's own `chrome://`, `data:` and `blob:` loads, cache hits and Chrome's error page count nothing.py`
 counts each response's status line, headers and body (its `Content-Length`,
 i.e. the compressed size, when the server sends one) plus the request it
 sent, for every redirect hop. The figure is an **estimate of the payload
