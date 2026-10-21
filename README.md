@@ -490,6 +490,37 @@ use:
   loads; a served comparison needs a residential exit and was not made.
   `--load-media` (or `SLEEPNUMBER_LOAD_MEDIA=1`) loads media. Without a
   proxy, or over `--cdp-endpoint`, nothing is blocked.
+- **Every run is metered and capped, in every entry point.**
+  `--proxy-budget-mb` (default **10**, `0` = no cap, also
+  `SLEEPNUMBER_PROXY_BUDGET_MB`). Once more than that has gone through the
+  proxy, further requests are refused, the run stops before its next page
+  request or retry, keeps the rows it has and exits **6** (or **5** with no
+  rows), `stop_reason: proxy_budget_exceeded`. It never carries on past the
+  cap; with `--concurrency` every worker shares the one budget and the
+  pages left in the queue are reported unattempted. The sidecars
+  (`<out>.meta.json`, and `<out>.latest_attempt.meta.json`, which every
+  metered run writes) carry `proxy_bytes`, `proxy_budget_bytes` (`null` with
+  no cap) and `proxy_budget_exceeded`, and the log ends with
+  `Proxy traffic: X.X MB of Y MB budget`.
+
+How the bytes are counted, per entry point: Playwright sums
+`request.sizes()` (request headers + body, response headers + body) of
+every finished or failed request; pyppeteer reads CDP
+`Network.loadingFinished.encodedDataLength` (bytes received, headers
+included) plus each request's line, headers and body from
+`Network.requestWillBeSent`; Selenium reads the same CDP events from
+chromedriver's performance log around every page load; `http_scraper.py`
+counts each response's status line, headers and body (its `Content-Length`,
+i.e. the compressed size, when the server sends one) plus the request it
+sent, for every redirect hop. The figure is an **estimate of the payload
+through the tunnel**: TLS, the CONNECT exchange and connections the browser
+opens for itself are not visible to any engine and add a few percent; the
+pre-check (under 1 KB) is not counted. Measured 2026-10-21 against a local
+stub proxy that counted every byte it carried: a 60 kB page with a 30 kB
+stylesheet and a 90 kB script, Playwright within 0.2%, pyppeteer 0.6%,
+Selenium 0.7%; a 30 kB page through `http_scraper.py`, 0.9% (the
+uncounted pre-check included). A megabyte here is 10^6 bytes. Nothing is
+metered without a proxy or over `--cdp-endpoint`.
 
 ### Install exactly one engine
 
@@ -519,7 +550,9 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   `4` zero products · `5` the content was never obtained (a remote API
   error, a navigation timeout, a dead proxy, or a proxy that refused the
   credential or the balance before the run began: `stop_reason:
-  proxy_auth_failed` / `proxy_balance_exhausted`) · `6` partial.
+  proxy_auth_failed` / `proxy_balance_exhausted`; or the proxy budget spent
+  before any row: `proxy_budget_exceeded`) · `6` partial (including a run
+  `--proxy-budget-mb` stopped after gathering rows).
 - **`<out>.meta.json` beside every run that WRITES ROWS**, recording
   `status`, `stop_reason`, `transport`, which pages failed by number, and the
   site's own arithmetic about the result set — `total_results`, `per_page`,
@@ -541,7 +574,8 @@ python3 playwright_scraper.py --mode product --category cm-mattress
   your own log; this repo will not put a contradicting file next to good
   data. The one exception is a run the proxy pre-check stopped (see "Proxy
   traffic savers"): it writes `<out>.latest_attempt.meta.json`, a file with
-  its own name, and leaves `<out>.meta.json` alone.
+  its own name, and leaves `<out>.meta.json` alone. A run through a local
+  proxy always writes that file too, with its proxy traffic, rows or not.
 - **An empty CSV still carries its header.**
 - **Writes are atomic.** Each file is written beside its target and renamed
   over it, so a crash or a full disk mid-write leaves the previous file
