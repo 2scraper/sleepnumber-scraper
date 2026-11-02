@@ -1,4 +1,4 @@
-# sleepnumber-scraper
+# Sleep Number Scraper — Beds, Mattresses and Size Prices in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/sleepnumber-scraper?sort=semver)](https://github.com/2scraper/sleepnumber-scraper/releases)
 [![tests](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/sleepnumber-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer%20%7C%20Scraper%20API-informational)](#engines)
 [![needs a residential IP](https://img.shields.io/badge/needs-a%20residential%20IP-orange)](#access-read-this-before-anything-else)
+
+**Sleep Number scraper** — an open-source (MIT) Python tool that reads the sleepnumber.com catalogue of smart beds, mattresses, bases and bedding and writes one row per size variant, with its own sku, price, sale price, rating and availability, to JSON or CSV. Measured 2026-09-17, every URL answered a CloudFront 403 to a datacentre address while GB and US residential exits were served the full catalogue, so on a VPS or CI runner you need a residential proxy (or the Scraping Browser API), and on a home connection nothing at all. Use it for per-size price monitoring, comparing two runs with `diff_runs.py` to see which sizes went on sale.
 
 Scrapes [sleepnumber.com](https://www.sleepnumber.com): smart beds, mattresses,
 bases, bedding and furniture — **one row per size variant**, with its own sku,
@@ -642,6 +644,23 @@ python3 tools/make_fixtures.py captures/     # rebuild the pinned fixtures
 
 Every number here is dated and reproducible with one of those. A figure that
 describes a living thing rots; the command beside it does not.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [StockX scraper](https://github.com/2scraper/stockx-scraper) — Search results, category listings and product pages
+- [TikTok Shop scraper](https://github.com/2scraper/tiktok-shop-scraper) — Product pages to 39 columns
+- [Tokopedia scraper](https://github.com/2scraper/tokopedia-scraper) — IDR prices, discounts, ratings, sold counts and shops…
+- [Tractor Supply scraper](https://github.com/2scraper/tractorsupply-scraper) — Categories, departments and searches
+- [Woolworths scraper](https://github.com/2scraper/woolworths-scraper) — Prices, unit prices, specials, health star ratings…
+- [Amazon scraper](https://github.com/2scraper/amazon-scraper) — Search results, best-seller grids, product pages and reviews…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence
 
