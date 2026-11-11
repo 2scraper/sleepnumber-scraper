@@ -108,7 +108,8 @@ remote endpoint or an authenticated proxy.
 
 Expected — see requirements.txt. playwright and pyppeteer pin incompatible
 `pyee` versions; pyppeteer and selenium want different `urllib3` ranges.
-Install one engine per virtualenv if you need more than one.
+Install one engine per virtualenv if you need more than one, and keep those
+virtualenvs outside the clone (see the README's "Install exactly one engine").
 
 ## Something else
 

@@ -276,7 +276,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                            "regression.", page_num, 100.0 * coverage,
                            100.0 * page_flow.PRICE_COVERAGE_FLOOR)
     else:
-        if outcome.state == "no_listing":
+        if outcome.state == "notfound":
+            logger.error(
+                "The site answered with its own 404 page: there is no "
+                "page at %s. Check --category or --url; this is not a "
+                "block and no proxy will change it.", url)
+        elif outcome.state == "no_listing":
             logger.error(
                 "This URL is not a product listing. The site routed and "
                 "rendered it, but its payload carries no product list at all "
@@ -300,6 +305,9 @@ def scrape(args) -> int:
     stop_reason = "single_page_mode" if args.mode not in page_flow.PAGINATED_MODES else "completed"
 
     pool = proxy_pool_from_args(args)
+    if args.concurrency > 1:
+        assert not page_flow.CONCURRENCY_CAPABLE_MODES
+        logger.warning(page_flow.CONCURRENCY_IGNORED)
 
     # One request through the proxy before the first page request: a 407 or 402
     # from the gateway ends the run here, in seconds, instead of surfacing
@@ -319,7 +327,7 @@ def scrape(args) -> int:
 
             if not first.ok:
                 stop_reason = ("page_load_timeout" if first.load_failed
-                               else f"blocked_{first.blocked_by}")
+                               else page_flow.blocked_stop_reason(first.blocked_by))
                 blocked = first.blocked_by is not None
             elif args.mode in page_flow.PAGINATED_MODES and args.pages > 1:
                 seen_keys.update(r.sku for r in first.rows if r.sku is not None)
@@ -334,7 +342,7 @@ def scrape(args) -> int:
                     outcomes.append(outcome)
                     if not outcome.ok:
                         stop_reason = ("page_load_timeout" if outcome.load_failed
-                                       else f"blocked_{outcome.blocked_by}")
+                                       else page_flow.blocked_stop_reason(outcome.blocked_by))
                         blocked = outcome.blocked_by is not None
                         break
                     fresh = sum(1 for r in outcome.rows
@@ -421,6 +429,11 @@ def parse_args():
     p.add_argument("--pages", type=page_flow.positive_int, default=1,
                    help="Listing pages to crawl. No category measured on this "
                         "site has more than one.")
+    p.add_argument("--concurrency", type=page_flow.positive_int, default=1,
+                   metavar="N",
+                   help="Accepted for parity with the browser engines and has "
+                        "no effect here: ?page=N is ignored by this site, so "
+                        "pages cannot be fetched in parallel.")
     p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0,
                    help="Delay between pages, seconds.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,

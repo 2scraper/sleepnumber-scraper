@@ -527,7 +527,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # all three engines: this is the message a user acts on, and three
         # spellings of it is how two engines come to describe the same page
         # differently.
-        if outcome.state == "no_listing":
+        if outcome.state == "notfound":
+            logger.error(
+                "The site answered with its own 404 page: there is no "
+                "page at %s. Check --category or --url; this is not a "
+                "block and no proxy will change it.", url)
+        elif outcome.state == "no_listing":
             logger.error(
                 "This URL is not a product listing. The site routed and "
                 "rendered it, but its payload carries no product list at all "
@@ -567,9 +572,7 @@ def scrape(args) -> int:
         # there for the measurement (?page=N returns page one) rather than
         # repeating the reason in three engines and letting them drift.
         assert not page_flow.CONCURRENCY_CAPABLE_MODES
-        logger.warning("--concurrency is ignored in this engine: parallel "
-                       "page fetching (--mode transfers) is implemented in "
-                       "playwright_scraper.py. Running sequentially.")
+        logger.warning(page_flow.CONCURRENCY_IGNORED)
 
     # One request through the proxy before a browser exists: a 407 or 402
     # from the gateway ends the run here, in seconds, instead of surfacing
@@ -580,6 +583,26 @@ def scrape(args) -> int:
             args.out, stop_reason=refused.stop_reason,
             pages_requested=args.pages, start_url=args.url, mode=args.mode,
             source=SOURCE_DEFAULT)
+    # chromedriver's --proxy-server has nowhere to put a password, so a
+    # credentialled exit would be used WITHOUT its credential: the gateway
+    # answers 407, Chrome renders a blank page, and the run used to end as
+    # "blocked" — as though the site had refused. The outcome is known
+    # before any browser starts, so the run ends here, as a usage error —
+    # after the pre-check, so a credential the gateway itself rejects is
+    # still reported as that (exit 5, proxy_auth_failed).
+    if pool:
+        credentialled = [p for p in pool.proxies if split_credentials(p)[1]]
+        if credentialled:
+            logger.error(
+                "%d of %d proxy exit(s) carry a login and password (e.g. %s), "
+                "and Selenium cannot send them: chromedriver's --proxy-server "
+                "takes host:port only, so the proxy would refuse every "
+                "request. Nothing was fetched. Use http_scraper.py, "
+                "playwright_scraper.py or puppeteer_scraper.py with this "
+                "proxy, or give Selenium an exit that needs no password "
+                "(an IP-allowlisted one).",
+                len(credentialled), len(pool), mask(credentialled[0]))
+            return 2
     meter = proxy_meter.start(args, pool, remote=bool(getattr(args, "cdp_endpoint", None)))
 
     session = _Session(args, pool).open()
@@ -589,7 +612,7 @@ def scrape(args) -> int:
 
         if not first.ok:
             stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
+                           else page_flow.blocked_stop_reason(first.blocked_by))
             blocked = first.blocked_by is not None
         elif args.mode not in PAGINATED_MODES:
             pass
@@ -617,7 +640,7 @@ def scrape(args) -> int:
                 outcomes.append(outcome)
                 if not outcome.ok:
                     stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
+                                   else page_flow.blocked_stop_reason(outcome.blocked_by))
                     blocked = outcome.blocked_by is not None
                     break
 
@@ -723,7 +746,9 @@ def parse_args():
     p.add_argument("--pages", type=page_flow.positive_int, default=1)
     p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0)
     p.add_argument("--concurrency", type=page_flow.positive_int, default=1,
-                   help="Ignored in this engine — see playwright_scraper.py.")
+                   help="Has no effect on this site (a warning says why): ?page=N is "
+                        "ignored by the server, so pages cannot be fetched in "
+                        "parallel.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "Counts ATTEMPTS, so 1 means 'try once, do not retry'; "

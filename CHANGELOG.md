@@ -76,6 +76,16 @@ nobody discovers it from a bill or a broken cron job.
 
 ### Fixed
 
+- The site's own 404 (for example `--mode product --category i8`) is reported as not found, exit **4**, with a message naming the URL. CloudFront writes `x-cache: Error from cloudfront` on every 4xx/5xx, the site's 404 included, and that header alone used to make the page a block (exit **3**) in `http_scraper.py`, Playwright and pyppeteer. It now counts as a refusal only when the body carries none of the site's assets. A 5xx the application rendered is retried rather than reported as not found.
+- `selenium_scraper.py` with a proxy that has a login and password now stops with exit **2** before starting a browser and says why (chromedriver cannot send a proxy password). It used to start Chrome without the credential, get the proxy's 407 and report exit **3** as though the site had refused. A credential the gateway itself rejects still ends with exit 5, `proxy_auth_failed`.
+- A page refused without a recognised vendor records `stop_reason: blocked`, not `blocked_blocked`, in every engine.
+- `puppeteer_scraper.py`: when Chromium does not start, the run ends with exit **5**, `stop_reason: browser_launch_failed` and a pointer to `--chromium-path`, instead of a traceback and exit 1. pyppeteer's own exit hook, which could only raise "This event loop is already running", is no longer installed.
+- `http_scraper.py` accepts `--concurrency` like the browser engines. Every entry point now logs the same reason why it has no effect on this site, and runs sequentially. The Selenium and pyppeteer message no longer names a `--mode transfers` that does not exist here.
+- The proxy pre-check verifies the site's TLS certificate against `certifi`, as `requests` does. With Python from python.org on macOS (no system root certificates), every pre-check used to end with `site: SSLCertVerificationError` while the fetch itself worked.
+- Proxy budgets and traffic under 1 MB are logged with two significant figures: `--proxy-budget-mb 0.05` reads `0.05 MB`, not `0.1 MB`, and 0.04 no longer reads `0.0 MB`.
+- The proxy example in the README, `.env.example` and `landing.md` uses the login as the 2Captcha dashboard shows it and the `eu.proxy.2captcha.com` gateway. The bare `proxy.2captcha.com` is not a gateway (the connection times out), and a `-zone-resi` login was refused with HTTP 407. Pinning a US exit is shown as `-zone-custom-region-us`.
+- The README says to keep engine virtualenvs outside the clone: the offline checks skip only a directory named `.venv`, and third-party code in any other in-clone virtualenv fails them.
+
 - The pyppeteer and Selenium proxy meter counts only `http://` / `https://` requests and responses that came over the network. Chrome's own loads (the `chrome://` new-tab page, `data:`, `blob:`), cache hits (`requestServedFromCache`, `fromDiskCache`, `fromPrefetchCache`, `fromServiceWorker`) and Chrome's error page count nothing. A sibling repo's Selenium run had counted about 2.8 MB of new-tab scripts while its proxy carried about 6 KB. The pyppeteer block sent once the budget is spent now reaches the page's own event loop even when the budget runs out on another thread.
 
 ## [0.3.0] — 2026-10-16

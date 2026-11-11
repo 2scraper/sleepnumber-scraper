@@ -222,9 +222,14 @@ class _Session:
             launch_args.append(f"--proxy-server={scrubbed}")
             logger.info("Using proxy exit %s", mask(self.pool.current))
 
+        # autoClose=False: pyppeteer's atexit hook calls run_until_complete
+        # on the loop, which is still running in the bridge thread, so it can
+        # only ever raise "This event loop is already running". close() owns
+        # the browser's shutdown instead.
         launch_options = dict(headless=self.args.headless, args=launch_args,
                               ignoreHTTPSErrors=True, handleSIGINT=False,
-                              handleSIGTERM=False, handleSIGHUP=False)
+                              handleSIGTERM=False, handleSIGHUP=False,
+                              autoClose=False)
         chromium_path = getattr(self.args, "chromium_path", None)
         if chromium_path:
             # pyppeteer reads no environment variable for this, so an
@@ -578,7 +583,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # all three engines: this is the message a user acts on, and three
         # spellings of it is how two engines come to describe the same page
         # differently.
-        if outcome.state == "no_listing":
+        if outcome.state == "notfound":
+            logger.error(
+                "The site answered with its own 404 page: there is no "
+                "page at %s. Check --category or --url; this is not a "
+                "block and no proxy will change it.", url)
+        elif outcome.state == "no_listing":
             logger.error(
                 "This URL is not a product listing. The site routed and "
                 "rendered it, but its payload carries no product list at all "
@@ -618,9 +628,7 @@ def scrape(args) -> int:
         # there for the measurement (?page=N returns page one) rather than
         # repeating the reason in three engines and letting them drift.
         assert not page_flow.CONCURRENCY_CAPABLE_MODES
-        logger.warning("--concurrency is ignored in this engine: parallel "
-                       "page fetching (--mode transfers) is implemented in "
-                       "playwright_scraper.py. Running sequentially.")
+        logger.warning(page_flow.CONCURRENCY_IGNORED)
 
     # One request through the proxy before a browser exists: a 407 or 402
     # from the gateway ends the run here, in seconds, instead of surfacing
@@ -634,14 +642,30 @@ def scrape(args) -> int:
     meter = proxy_meter.start(args, pool, remote=bool(getattr(args, "cdp_endpoint", None)))
 
     bridge = _AsyncBridge()
-    session = _Session(bridge, args, pool).open()
+    try:
+        session = _Session(bridge, args, pool).open()
+    except Exception as e:  # noqa: BLE001 — pyppeteer raises broadly here
+        if args.cdp_endpoint:
+            raise
+        hint = (f"Check the browser at --chromium-path {args.chromium_path}."
+                if args.chromium_path else
+                "pyppeteer's own Chromium download does not run on every "
+                "system; pass --chromium-path with a local Chrome or "
+                "Chromium, or use playwright_scraper.py.")
+        logger.error("Chromium did not start (%s: %s). %s", type(e).__name__,
+                     _mask_credentials(str(e).strip())[:300], hint)
+        bridge.close()
+        return finish_without_fetch(
+            args.out, stop_reason="browser_launch_failed",
+            pages_requested=args.pages, start_url=args.url, mode=args.mode,
+            source=SOURCE_DEFAULT)
     try:
         first = _fetch_one_page(session, args, pool, 1, args.url)
         outcomes.append(first)
 
         if not first.ok:
             stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
+                           else page_flow.blocked_stop_reason(first.blocked_by))
             blocked = first.blocked_by is not None
         elif args.mode not in PAGINATED_MODES:
             pass
@@ -669,7 +693,7 @@ def scrape(args) -> int:
                 outcomes.append(outcome)
                 if not outcome.ok:
                     stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
+                                   else page_flow.blocked_stop_reason(outcome.blocked_by))
                     blocked = outcome.blocked_by is not None
                     break
 
@@ -776,7 +800,9 @@ def parse_args():
     p.add_argument("--pages", type=page_flow.positive_int, default=1)
     p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0)
     p.add_argument("--concurrency", type=page_flow.positive_int, default=1,
-                   help="Ignored in this engine — see playwright_scraper.py.")
+                   help="Has no effect on this site (a warning says why): ?page=N is "
+                        "ignored by the server, so pages cannot be fetched in "
+                        "parallel.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "Counts ATTEMPTS, so 1 means 'try once, do not retry'; "

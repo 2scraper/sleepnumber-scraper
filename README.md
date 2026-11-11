@@ -84,8 +84,17 @@ helps is a different exit.
 
 ```bash
 # .env, next to the scripts — never on the command line
-SLEEPNUMBER_PROXY=http://{login}-zone-resi-region-us:{password}@proxy.2captcha.com:2334
+# {login} and {password} exactly as the 2Captcha dashboard shows them
+SLEEPNUMBER_PROXY=http://{login}:{password}@eu.proxy.2captcha.com:2334
+# or, to pin a US exit:
+# SLEEPNUMBER_PROXY=http://{login}-zone-custom-region-us:{password}@eu.proxy.2captcha.com:2334
 ```
+
+Use the gateway host the dashboard gives you (`eu.proxy.2captcha.com` or
+`na.proxy.2captcha.com`); the bare `proxy.2captcha.com` is not a proxy
+gateway and the connection times out. A login with `-zone-resi` was refused
+by the gateway with HTTP 407 (measured 2026-11-11), which this toolkit
+reports as exit 5 before any browser starts.
 
 ---
 
@@ -273,8 +282,9 @@ the site's own arithmetic (`next_page`, `last_page`, `total_results`,
 `per_page`) and terminated on **data** — a page that adds no new sku ends the
 listing.
 
-**`--concurrency` is refused, with the reason.** It follows from the above:
-workers would fetch page one in parallel. It is also moot — `per_page` is 100
+**`--concurrency` has no effect, and every entry point says why.** It is
+accepted, a warning gives the reason and the run is sequential. It follows from
+the above: workers would fetch page one in parallel. It is also moot — `per_page` is 100
 and the largest category measured holds 20 products, so **every category is
 one page**.
 
@@ -351,7 +361,10 @@ served pages and **0** on both refusals; `__reactRouterContext` is 5 against 0.
 Response headers are read first where available, because they are the one
 signal a body cannot forge: a served page answers `x-cache: Miss from
 cloudfront` with `server: Fly/…`, a refusal `Error from cloudfront` with
-`server: CloudFront`.
+`server: CloudFront`. CloudFront also writes `Error from cloudfront` on the
+site's own 404, so that header counts as a refusal only when the body carries
+none of the site's assets; a 404 page the application rendered is reported as
+not found (exit 4), not as a block.
 
 ---
 
@@ -361,7 +374,7 @@ cloudfront` with `server: Fly/…`, a refusal `Error from cloudfront` with
 |---|---|
 | **`http_scraper.py`** | **Recommended. No browser at all** — same rows, about a third of the time. |
 | `playwright_scraper.py` | A real browser, for when one is wanted. 52 rows, exit 0, complete. |
-| `puppeteer_scraper.py` | Works. Byte-identical rows to Playwright on the same URL. |
+| `puppeteer_scraper.py` | Byte-identical rows to Playwright on the same URL. pyppeteer downloads its own Chromium, which does not start on every system; then the run stops with exit 5 (`browser_launch_failed`) and `--chromium-path /path/to/chrome` points it at a local Chrome or Chromium. |
 | `selenium_scraper.py` | **Cannot authenticate a proxy** — see below. |
 | `scraper_api_client.py` | No local browser. Needs `--cdp-url` here. |
 
@@ -405,11 +418,11 @@ own.
 ### Selenium's limitation matters more here than elsewhere
 
 `chromedriver`'s `--proxy-server` takes a bare `host:port` with nowhere to put
-a password. The engine strips the credentials and warns — it will not let you
-believe a `user:pass` URL is doing something. On most sites that is an
-inconvenience; on this one the proxy is the whole point, so a credentialled
-proxy leaves Selenium with no way through and it reports exit 3 with the
-reason rather than a misleading "0 products".
+a password. Sent without it, the proxy itself refuses the browser (HTTP
+407) and the site is never asked. So the engine checks before it starts a
+browser: if any proxy exit carries a login and password, it stops with
+**exit 2**, names the problem and fetches nothing — rather than reporting the
+proxy's refusal as a site block.
 
 **The engine itself is fine, and that is measured rather than assumed.** Give
 it a proxy that needs no password and it returns the same rows as the other
@@ -529,7 +542,18 @@ metered without a proxy or over `--cdp-endpoint`.
 `playwright` and `pyppeteer` pin mutually unsatisfiable `pyee` versions, and
 `pyppeteer` and `selenium` collide on `urllib3`. They do run side by side in
 practice, but `pip check` reports the conflict and pip may resolve it by
-downgrading something you wanted. Use a virtualenv per engine.
+downgrading something you wanted. Use a virtualenv per engine, and create it
+**outside the clone**:
+
+```bash
+python3 -m venv ~/.venvs/sleepnumber-playwright
+~/.venvs/sleepnumber-playwright/bin/pip install -r requirements-playwright.txt
+```
+
+The offline checks (`smoke_test.py`, `pytest`) read every Python file inside
+the clone and skip only a directory named `.venv`; a virtualenv under any
+other name there gets its third-party code checked too, and those checks
+fail on code that is not this repository's.
 
 ---
 

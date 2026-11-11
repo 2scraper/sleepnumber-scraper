@@ -78,7 +78,7 @@ On a home connection that is all you need. On a VPS, a CI runner or a
 container, add a residential exit:
 
 ```bash
-echo 'SLEEPNUMBER_PROXY=http://{login}-zone-resi-region-us:{password}@proxy.2captcha.com:2334' >> .env
+echo 'SLEEPNUMBER_PROXY=http://{login}:{password}@eu.proxy.2captcha.com:2334' >> .env
 ```
 
 ## Licence

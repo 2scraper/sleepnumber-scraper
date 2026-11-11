@@ -509,6 +509,23 @@ def test_headers_alone_can_settle_it():
 
 
 @check
+def test_the_sites_own_404_through_cloudfront_is_notfound():
+    """CloudFront stamps `x-cache: Error from cloudfront` on EVERY 4xx/5xx,
+    the site's own 404 included. Read as a refusal, `--mode product
+    --category i8` (a real 404) reported exit 3 and blamed the address."""
+    err = {"x-cache": "Error from cloudfront", "server": "Fly/abc"}
+    url = "https://www.sleepnumber.com/products/i8"
+    assert P.detect_page_state(NOTFOUND_HTML, 404, url, err) == "notfound"
+    # The refusal itself, with the same header, is still a block.
+    assert P.detect_page_state(CLOUDFRONT_403, 403, "https://www.sleepnumber.com/",
+                               {"x-cache": "Error from cloudfront",
+                                "server": "CloudFront"}) == "blocked"
+    # A 5xx the application rendered is retried, not reported as "no page".
+    assert P.detect_page_state(NOTFOUND_HTML, 503, url, err) == "unknown"
+    assert page_flow.should_retry("unknown") is True
+
+
+@check
 def test_markers_absent_from_a_good_page():
     """Count a marker on a known-good page first — the reason this repo's
     marker list is two entries long.
@@ -1559,9 +1576,19 @@ def test_every_engine_help_runs():
 def test_engines_refuse_concurrency_with_a_reason():
     """A flag that looks available and silently does nothing is the shape of
     bug this family keeps finding. It must be refused WITH the reason."""
-    for name in ENGINE_NAMES:
+    for name in ENGINE_NAMES + ("http_scraper",):
         text = (ROOT / f"{name}.py").read_text()
-        assert "CONCURRENCY_CAPABLE_MODES" in text, name
+        assert "CONCURRENCY_IGNORED" in text, (
+            f"{name} does not give the shared reason for ignoring --concurrency")
+    # The HTTP client used to reject the flag as unrecognised (exit 2), with
+    # no reason at all. It must parse it like the browser engines do.
+    import http_scraper
+    saved = sys.argv
+    try:
+        sys.argv = ["http_scraper.py", "--concurrency", "2"]
+        assert http_scraper.parse_args().concurrency == 2
+    finally:
+        sys.argv = saved
 
 
 @check
@@ -2416,6 +2443,61 @@ def test_proxy_traffic_savers(skips, check, group):
         ok &= check(f"{name}: ...and the credential never reaches the log",
                     _SAVERS_SECRET not in buf.getvalue())
 
+    # -- Selenium cannot send a proxy password: refused before a browser ----
+    # It used to start Chrome without the credential, take the gateway's 407
+    # as a blank page and report `blocked_blocked`, exit 3 — a site refusal.
+    try:
+        import selenium_scraper as sel
+    except ImportError as e:
+        skips.append(f"selenium credentialled-proxy refusal — {e}")
+        sel = None
+    if sel is not None:
+        launched = []
+        with tempfile.TemporaryDirectory() as tmp:
+            args = _engine_args(sel, tmp, "http://user:" + _SAVERS_SECRET
+                                + "@127.0.0.1:1")
+            with mock.patch.object(proxy_check, "gate", return_value=None), \
+                    mock.patch.object(sel, "_Session", side_effect=lambda *a, **k:
+                                      launched.append(1)), \
+                    _captured_output() as buf:
+                try:
+                    rc = sel.scrape(args)
+                except Exception as e:  # noqa: BLE001 — fail BY NAME
+                    rc = f"raised {type(e).__name__}"
+            wrote = any(os.path.exists(os.path.join(tmp, "out" + s))
+                        for s in (".json", ".csv", ".meta.json"))
+        ok &= check(f"selenium_scraper: a credentialled proxy is refused with "
+                    f"exit 2 before a browser starts (rc={rc}, "
+                    f"launched={len(launched)})",
+                    rc == 2 and not launched and not wrote
+                    and "cannot send them" in buf.getvalue()
+                    and _SAVERS_SECRET not in buf.getvalue())
+
+    # -- pyppeteer: a Chromium that will not start is a reason, not a trace --
+    try:
+        import puppeteer_scraper as pup
+    except ImportError as e:
+        skips.append(f"pyppeteer launch failure — {e}")
+        pup = None
+    if pup is not None:
+        def _no_browser(self):
+            raise RuntimeError("Browser closed unexpectedly")
+        with tempfile.TemporaryDirectory() as tmp:
+            args = _engine_args(pup, tmp, None)
+            with mock.patch.object(pup._Session, "open", _no_browser), \
+                    _captured_output() as buf:
+                try:
+                    rc = pup.scrape(args)
+                except Exception as e:  # noqa: BLE001 — fail BY NAME
+                    rc = f"raised {type(e).__name__}"
+            side = os.path.join(tmp, "out.latest_attempt.meta.json")
+            meta = json.load(open(side)) if os.path.exists(side) else {}
+        ok &= check(f"puppeteer_scraper: a Chromium that does not start exits 5 "
+                    f"with browser_launch_failed and the --chromium-path hint "
+                    f"(rc={rc})",
+                    rc == 5 and meta.get("stop_reason") == "browser_launch_failed"
+                    and "--chromium-path" in buf.getvalue())
+
     # -- each engine installs blocking only through a local proxy -----------
     for name in ENGINE_NAMES:
         try:
@@ -2659,6 +2741,12 @@ def test_proxy_meter_units(skips):
                 == 0.0 and parser.parse_args(
                     ["--proxy-budget-mb", "2.5"]).proxy_budget_mb == 2.5)
     env = proxy_meter.BUDGET_ENV
+    ok &= _savers_check("a small budget is not rounded away in the log "
+                "(0.05 -> '0.05 MB', 0.04 -> '0.04 MB', never '0.0 MB')",
+                proxy_meter.fmt_mb(50_000) == "0.05 MB"
+                and proxy_meter.fmt_mb(40_000) == "0.04 MB"
+                and proxy_meter.fmt_mb(1_000_000) == "1.0 MB"
+                and proxy_meter.fmt_mb(12_345_678) == "12.3 MB")
     with mock.patch.dict(os.environ, {env: ""}):
         ok &= _savers_check("default budget is 10 MB",
                     proxy_meter.budget_mb(ns(proxy_budget_mb=None)) == 10.0
@@ -2977,7 +3065,7 @@ def test_proxy_meter_units(skips):
             info.call_args_list + warn.call_args_list]
     ok &= _savers_check(f"the run ends with 'Proxy traffic: X.X MB of Y MB budget' "
                 f"({said})",
-                "Proxy traffic: 0.1 MB of 10.0 MB budget" in said
+                "Proxy traffic: 0.12 MB of 10.0 MB budget" in said
                 and extra.get("site") == 1 and extra.get("proxy_bytes"))
     return ok
 
@@ -3279,8 +3367,10 @@ def test_proxy_meter_in_the_engines(skips):
                     and meta.get("proxy_bytes") == 20_000
                     and meta.get("proxy_budget_bytes") == 10_000
                     and attempt.get("proxy_bytes") == 20_000)
-        ok &= _savers_check(f"{name}: ...and the log says 'Proxy traffic: 0.0 MB of "
-                    f"0.0 MB budget'", "Proxy traffic: 0.0 MB of 0.0 MB budget"
+        # 20,000 of 10,000 bytes once read "0.0 MB of 0.0 MB": a budget that
+        # was set, and spent twice over, printed as though it were zero.
+        ok &= _savers_check(f"{name}: ...and the log says 'Proxy traffic: 0.02 MB of "
+                    f"0.01 MB budget'", "Proxy traffic: 0.02 MB of 0.01 MB budget"
                     in log)
         with tempfile.TemporaryDirectory() as tmp:
             rc, calls, meta, attempt, log = _drive_budget_run(engine, tmp, False)
