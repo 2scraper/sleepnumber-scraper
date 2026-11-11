@@ -846,9 +846,16 @@ def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
     #    rather than a refusal, so if it ever appears the state is a solvable
     #    challenge and not a dead end — which is a different answer, and the
     #    reason this looks for it rather than assuming.
+    #
+    #    `x-cache: Error from cloudfront` alone is NOT a refusal: CloudFront
+    #    stamps it on EVERY 4xx/5xx, including the site's own 404, which
+    #    arrives through the same edge as a 226 KB application page. So it
+    #    settles `blocked` only when the body was not built from the site's
+    #    assets; a page that was falls through to the structural checks.
     if head.get("x-amzn-waf-action", "").lower() in ("captcha", "challenge"):
         return "captcha"
-    if "error from cloudfront" in head.get("x-cache", "").lower():
+    if ("error from cloudfront" in head.get("x-cache", "").lower()
+            and not any(m in text.lower() for m in SITE_ASSET_MARKERS)):
         return "blocked"
 
     # 1. Unambiguous positive: the application rendered and the payload holds
@@ -910,6 +917,10 @@ def detect_page_state(html: str, status: Optional[int] = None, url: str = "",
     #    a URL that matched no route has `root` and nothing else. Counted
     #    2026-09-17: exactly one route key on all 17 routed captures, zero on
     #    both real 404s.
+    #    A 5xx the application rendered is a server error, not "no such
+    #    page": its payload can carry `root` alone too. Retried as unknown.
+    if status is not None and status >= 500:
+        return "unknown"
     if data is not None and not [k for k in data if k != "root"]:
         return "notfound"
     if status == 404 or any(marker in lowered for marker in _NOT_FOUND_MARKERS):

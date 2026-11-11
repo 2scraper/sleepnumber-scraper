@@ -81,6 +81,14 @@ PAGINATED_MODES = ("listing",)
 # this family keeps finding.
 CONCURRENCY_CAPABLE_MODES: Sequence[str] = ()
 
+# What every entry point says when --concurrency > 1 is passed. One string,
+# so four entry points cannot give four different reasons.
+CONCURRENCY_IGNORED = (
+    "--concurrency has no effect on this site, so the run is sequential: "
+    "?page=N is ignored here (page 2 and page 99 both return page one), so "
+    "parallel workers would fetch the same page, and every category measured "
+    "fits on one page anyway.")
+
 # What "this page has painted" means per mode, for the engines' readiness
 # wait. Anchored on the hydration payload's own script rather than on a CSS
 # class: the classes here are build-generated and churn, and the payload is
@@ -378,6 +386,16 @@ class SolveBudget:
 
 def counts_as_blocked(state: str) -> bool:
     return STATE_POLICY.get(state, STATE_POLICY["unknown"])["blocked"]
+
+
+def blocked_stop_reason(blocked_by: Optional[str]) -> str:
+    """`stop_reason` for a page that was not served.
+
+    `blocked_by` is a vendor name when one was recognised and the bare state
+    `blocked` otherwise; prefixing the latter produced `blocked_blocked`."""
+    if not blocked_by or blocked_by == "blocked":
+        return "blocked"
+    return f"blocked_{blocked_by}"
 
 
 # ---------------------------------------------------------------------------

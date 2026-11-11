@@ -59,6 +59,19 @@ from urllib.parse import urlparse
 
 from proxy_pool import mask
 
+
+def _tls_context() -> ssl.SSLContext:
+    """The same trust store `requests` uses, so the pre-check and the fetch
+    agree. Python from python.org on macOS ships no system roots, and a bare
+    default context failed every site check there with
+    SSLCertVerificationError while the fetch itself (requests + certifi)
+    worked. certifi comes with requests; the system store is the fallback."""
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
 logger = logging.getLogger("proxy_check")
 
 # Where the proxy credential comes from, for the failure message. Named
@@ -188,7 +201,7 @@ def precheck(proxy_url: Optional[str], target_url: str,
         sock = socket.create_connection((proxy.hostname, proxy_port),
                                         timeout=timeout)
         if proxy.scheme == "https":
-            sock = ssl.create_default_context().wrap_socket(
+            sock = _tls_context().wrap_socket(
                 sock, server_hostname=proxy.hostname)
         if target.scheme == "https":
             sock.sendall((f"CONNECT {target.hostname}:{target_port} HTTP/1.1\r\n"
@@ -213,7 +226,7 @@ def precheck(proxy_url: Optional[str], target_url: str,
                 # wrapped socket; the CONNECT answer already says enough.
                 return ProxyCheck("ok", None, "tunnel established")
             try:
-                tls = ssl.create_default_context().wrap_socket(
+                tls = _tls_context().wrap_socket(
                     sock, server_hostname=target.hostname)
                 sock = tls
                 sock.sendall((f"HEAD /robots.txt HTTP/1.1\r\n"

@@ -713,7 +713,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # An empty category and a broken parser are different facts and want
         # different readers. Reported as "0 products", a parsing failure sends
         # someone to check the URL instead of the parser — so name it.
-        if outcome.state == "no_listing":
+        if outcome.state == "notfound":
+            logger.error(
+                "The site answered with its own 404 page: there is no "
+                "page at %s. Check --category or --url; this is not a "
+                "block and no proxy will change it.", url)
+        elif outcome.state == "no_listing":
             logger.error(
                 "This URL is not a product listing. The site routed and "
                 "rendered it, but its payload carries no product list at all "
@@ -748,7 +753,7 @@ def _worker_pool(pool, worker_index: int):
 def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
     """Fetch `specs` [(page_num, url), ...] across `concurrency` workers.
 
-    Only reached for --mode transfers — see CONCURRENCY_CAPABLE_MODES.
+    Not reached on this site: CONCURRENCY_CAPABLE_MODES is empty.
     """
     work = queue.Queue()
     for spec in specs:
@@ -838,11 +843,7 @@ def scrape(args) -> int:
     concurrency = max(1, args.concurrency)
     if concurrency > 1:
         if args.mode not in CONCURRENCY_CAPABLE_MODES:
-            logger.info("--concurrency is ignored in --mode %s: pagination "
-                        "here is not independently addressable: ?page=N is "
-                        "ignored by this site and every category measured "
-                        "fits on one page.",
-                        args.mode)
+            logger.warning(page_flow.CONCURRENCY_IGNORED)
             concurrency = 1
         elif args.cdp_endpoint:
             logger.warning("--concurrency is ignored with --cdp-endpoint: "
@@ -880,7 +881,7 @@ def scrape(args) -> int:
 
             if not first.ok:
                 stop_reason = ("page_load_timeout" if first.load_failed
-                               else f"blocked_{first.blocked_by}")
+                               else page_flow.blocked_stop_reason(first.blocked_by))
                 blocked = first.blocked_by is not None
             elif args.mode not in PAGINATED_MODES:
                 pass
@@ -909,7 +910,7 @@ def scrape(args) -> int:
                     if failed:
                         worst = min(failed, key=lambda o: o.page_num)
                         stop_reason = ("page_load_timeout" if worst.load_failed
-                                       else f"blocked_{worst.blocked_by}")
+                                       else page_flow.blocked_stop_reason(worst.blocked_by))
                         blocked = any(o.blocked_by for o in rest)
                     elif exhausted:
                         stop_reason = "no_new_products"
@@ -938,7 +939,7 @@ def scrape(args) -> int:
                         outcomes.append(outcome)
                         if not outcome.ok:
                             stop_reason = ("page_load_timeout" if outcome.load_failed
-                                           else f"blocked_{outcome.blocked_by}")
+                                           else page_flow.blocked_stop_reason(outcome.blocked_by))
                             blocked = outcome.blocked_by is not None
                             break
 
@@ -1063,10 +1064,9 @@ def parse_args():
                         "for a catalogue that grows, not a knob you need.")
     p.add_argument("--delay", type=page_flow.non_negative_float, default=2.0, help="Delay between pages, seconds")
     p.add_argument("--concurrency", type=page_flow.positive_int, default=1, metavar="N",
-                   help="Fetch pages through N parallel workers. REFUSED on "
-                        "this site and told why: ?page=N is ignored by the "
-                        "server, so workers would fetch page one in parallel. "
-                        "See page_flow.CONCURRENCY_CAPABLE_MODES.")
+                   help="Has no effect on this site (a warning says why): ?page=N is "
+                        "ignored by the server, so pages cannot be fetched in "
+                        "parallel.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3).")
     p.add_argument("--retry-delay", type=page_flow.non_negative_float, default=2.0,

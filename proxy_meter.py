@@ -140,7 +140,19 @@ def _quietly(callback) -> None:
 
 
 def fmt_mb(n: Optional[int]) -> str:
-    return "unlimited" if n is None else f"{n / MB:.1f} MB"
+    """Megabytes for a log line. One decimal from 1 MB up; below that, two
+    significant figures, so a 0.05 MB budget reads 0.05 and not 0.1, and no
+    nonzero amount is ever printed as 0.0."""
+    if n is None:
+        return "unlimited"
+    value = n / MB
+    if value >= 1 or n <= 0:
+        return f"{value:.1f} MB"
+    decimals = 1
+    while round(value, decimals) < 0.1 ** (decimals - 1) and decimals < 6:
+        decimals += 1
+    text = f"{value:.{decimals}f}".rstrip("0")
+    return (text + "0" if text.endswith(".") else text) + " MB"
 
 
 # ---------------------------------------------------------------------------
