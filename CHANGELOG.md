@@ -11,6 +11,8 @@ nobody discovers it from a bill or a broken cron job.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-11-11
+
 > **Behaviour changes.** (1) A run through a proxy now makes one pre-check
 > request before its first page request, in `http_scraper.py` and all three
 > browser engines. A proxy that answers **HTTP 407** or **402** ends the run
@@ -25,6 +27,14 @@ nobody discovers it from a bill or a broken cron job.
 > point: it keeps its rows and exits **6** (**5** with none) with
 > `stop_reason: proxy_budget_exceeded`, and it always writes
 > `<out>.latest_attempt.meta.json`.
+>
+> (4) **Exit codes that used to misname the cause.** The site's own 404
+> exits **4** (was 3, "blocked"). `selenium_scraper.py` with a proxy that
+> has a login and password exits **2** before starting a browser (was 3,
+> `blocked_blocked`). `puppeteer_scraper.py` exits **5** with
+> `stop_reason: browser_launch_failed` when Chromium does not start (was a
+> traceback and 1). A page refused without a recognised vendor records
+> `stop_reason: blocked`, not `blocked_blocked`.
 
 ### Added
 
@@ -406,7 +416,8 @@ Recorded because they are the argument for writing those checks at all:
   navigation that never happened. A blank document is now classified
   structurally and answers `blocked`.
 
-[Unreleased]: https://github.com/2scraper/sleepnumber-scraper/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/2scraper/sleepnumber-scraper/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/2scraper/sleepnumber-scraper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/2scraper/sleepnumber-scraper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/2scraper/sleepnumber-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/sleepnumber-scraper/releases/tag/v0.1.0
