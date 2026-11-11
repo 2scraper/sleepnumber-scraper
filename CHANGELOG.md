@@ -76,6 +76,8 @@ nobody discovers it from a bill or a broken cron job.
 
 ### Fixed
 
+- The Docker image failed to build with playwright 1.65: its bundled node needs `libatomic.so.1`, which `python:3.12-slim` lacks, so `playwright install` exited 127. The Dockerfile now installs `libatomic1` first.
+
 - The site's own 404 (for example `--mode product --category i8`) is reported as not found, exit **4**, with a message naming the URL. CloudFront writes `x-cache: Error from cloudfront` on every 4xx/5xx, the site's 404 included, and that header alone used to make the page a block (exit **3**) in `http_scraper.py`, Playwright and pyppeteer. It now counts as a refusal only when the body carries none of the site's assets. A 5xx the application rendered is retried rather than reported as not found.
 - `selenium_scraper.py` with a proxy that has a login and password now stops with exit **2** before starting a browser and says why (chromedriver cannot send a proxy password). It used to start Chrome without the credential, get the proxy's 407 and report exit **3** as though the site had refused. A credential the gateway itself rejects still ends with exit 5, `proxy_auth_failed`.
 - A page refused without a recognised vendor records `stop_reason: blocked`, not `blocked_blocked`, in every engine.
