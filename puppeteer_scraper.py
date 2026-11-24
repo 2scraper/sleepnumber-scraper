@@ -111,7 +111,11 @@ class _AsyncBridge:
     @staticmethod
     def _on_loop_exception(loop, context):
         message = str(context.get("exception") or context.get("message") or "")
-        if "Target closed" in message or "Connection closed" in message:
+        # "No session with given id": pyppeteer detaching a target session the
+        # Scraping Browser already dropped on navigation (seen 2026-11-12 on
+        # unmodified v0.3.1 too); the page and its rows are unaffected.
+        if ("Target closed" in message or "Connection closed" in message
+                or "No session with given id" in message):
             logger.debug("Ignoring teardown noise from pyppeteer: %s", message)
             return
         loop.default_exception_handler(context)
@@ -198,9 +202,13 @@ class _Session:
                 return self
             try:
                 session = self.bridge.run(self.page.target.createCDPSession())
-                self.bridge.run(session.send(
-                    "Captcha.setAutoSolve",
-                    {"autoSolve": True, "options": [{"type": "*"}]}))
+                async def _autosolve():
+                    # CDPSession.send returns a Future; the bridge takes a
+                    # coroutine, so it is awaited inside one.
+                    return await session.send(
+                        "Captcha.setAutoSolve",
+                        {"autoSolve": True, "options": [{"type": "*"}]})
+                self.bridge.run(_autosolve())
                 session.on("Captcha.detected", lambda *_: logger.info(
                     "[Scraping Browser] CAPTCHA detected on page."))
                 session.on("Captcha.solveFinished", lambda *_: logger.info(
@@ -244,8 +252,7 @@ class _Session:
         self.bridge.run(self.page.setUserAgent(_chrome_ua(version)))
         self.bridge.run(self.page.setViewport({"width": 1600, "height": 1000}))
         if credentials:
-            self.bridge.run(self.page.authenticate(
-                {"username": credentials[0], "password": credentials[1]}))
+            self._authenticate_proxy(*credentials)
         if proxy_check.block_media(self.args, self.pool, remote=False):
             self.bridge.run(proxy_check.install_pyppeteer(self.page))
         self.bridge.run(proxy_meter.install_pyppeteer(
@@ -253,6 +260,43 @@ class _Session:
         if self.args.fingerprint:
             self._apply_fingerprint()
         return self
+
+    def _authenticate_proxy(self, username: str, password: str):
+        """Answer the proxy's auth challenge through the CDP Fetch domain.
+
+        page.authenticate() turns on Network.setRequestInterception, which
+        current Chrome no longer has. A second challenge for the same request
+        means the login was refused: cancelled, so it cannot loop."""
+        client = self.bridge.run(self.page.target.createCDPSession())
+        answered = set()
+
+        async def send(method, params):
+            try:
+                await client.send(method, params)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Fetch %s not sent: %s", method, e)
+
+        def on_auth(event):
+            rid = event.get("requestId")
+            reply = "CancelAuth" if rid in answered else "ProvideCredentials"
+            answered.add(rid)
+            asyncio.ensure_future(send("Fetch.continueWithAuth", {
+                "requestId": rid,
+                "authChallengeResponse": {"response": reply,
+                                          "username": username,
+                                          "password": password}}))
+
+        def on_paused(event):
+            asyncio.ensure_future(send("Fetch.continueRequest",
+                                       {"requestId": event.get("requestId")}))
+
+        async def enable():
+            await client.send("Fetch.enable", {"handleAuthRequests": True,
+                                               "patterns": [{"urlPattern": "*"}]})
+
+        client.on("Fetch.authRequired", on_auth)
+        client.on("Fetch.requestPaused", on_paused)
+        self.bridge.run(enable())
 
     def _apply_fingerprint(self):
         from fingerprint_client import get_fingerprint, playwright_init_script, fingerprint_user_agent
@@ -285,6 +329,9 @@ class _Session:
         try:
             if self.remote:
                 self.bridge.run(self.page.close(), timeout=30)
+                # Drop the websocket too, or its tasks outlive the loop and
+                # print "Task was destroyed" after the run's summary.
+                self.bridge.run(self.browser.disconnect(), timeout=30)
             else:
                 self.bridge.run(self.browser.close(), timeout=30)
         except Exception as e:  # noqa: BLE001
@@ -642,21 +689,32 @@ def scrape(args) -> int:
     meter = proxy_meter.start(args, pool, remote=bool(getattr(args, "cdp_endpoint", None)))
 
     bridge = _AsyncBridge()
+    session = _Session(bridge, args, pool)
     try:
-        session = _Session(bridge, args, pool).open()
+        session.open()
     except Exception as e:  # noqa: BLE001 — pyppeteer raises broadly here
         if args.cdp_endpoint:
             raise
-        hint = (f"Check the browser at --chromium-path {args.chromium_path}."
-                if args.chromium_path else
-                "pyppeteer's own Chromium download does not run on every "
-                "system; pass --chromium-path with a local Chrome or "
-                "Chromium, or use playwright_scraper.py.")
-        logger.error("Chromium did not start (%s: %s). %s", type(e).__name__,
-                     _mask_credentials(str(e).strip())[:300], hint)
+        started = session.browser is not None
+        detail = _mask_credentials(str(e).strip())[:300]
+        if started:
+            # The browser is up; setting the page up failed. Close it while
+            # the loop still runs, so no websocket task outlives the loop.
+            session.close()
+            logger.error("Chromium started, but setting up the page failed "
+                         "(%s: %s).", type(e).__name__, detail)
+        else:
+            hint = (f"Check the browser at --chromium-path {args.chromium_path}."
+                    if args.chromium_path else
+                    "pyppeteer's own Chromium download does not run on every "
+                    "system; pass --chromium-path with a local Chrome or "
+                    "Chromium, or use playwright_scraper.py.")
+            logger.error("Chromium did not start (%s: %s). %s",
+                         type(e).__name__, detail, hint)
         bridge.close()
         return finish_without_fetch(
-            args.out, stop_reason="browser_launch_failed",
+            args.out, stop_reason=("browser_setup_failed" if started
+                                   else "browser_launch_failed"),
             pages_requested=args.pages, start_url=args.url, mode=args.mode,
             source=SOURCE_DEFAULT)
     try:
@@ -664,7 +722,7 @@ def scrape(args) -> int:
         outcomes.append(first)
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
+            stop_reason = (proxy_check.load_failure_reason(pool) if first.load_failed
                            else page_flow.blocked_stop_reason(first.blocked_by))
             blocked = first.blocked_by is not None
         elif args.mode not in PAGINATED_MODES:
@@ -692,7 +750,7 @@ def scrape(args) -> int:
                 outcome = _fetch_one_page(session, args, pool, page_num, url)
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
+                    stop_reason = (proxy_check.load_failure_reason(pool) if outcome.load_failed
                                    else page_flow.blocked_stop_reason(outcome.blocked_by))
                     blocked = outcome.blocked_by is not None
                     break

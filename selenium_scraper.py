@@ -393,6 +393,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             proxy_meter.check(args)
             try:
                 session.driver.get(url)
+                net_error = _chrome_error_page(session.driver)
+                if net_error:
+                    # chromedriver does not raise on a network error: Chrome
+                    # shows its own error page and get() returns. Parsed as
+                    # the site, that page read as "0 products", exit 4.
+                    raise WebDriverException(f"Chrome error page: net::{net_error}")
                 load_failed = False
                 proxy_meter.drain_selenium(session.driver)
                 break
@@ -556,6 +562,21 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     return outcome
 
 
+def _chrome_error_page(driver) -> str:
+    """The net::ERR_ code when Chrome is showing its own error page, else ""."""
+    # driver.current_url keeps the URL that was asked for; only the page's
+    # own location says chrome-error:// (measured, Chrome 157).
+    try:
+        url = driver.execute_script("return location.href") or ""
+        source = driver.page_source or ""
+    except WebDriverException:
+        return ""
+    if not (url.startswith("chrome-error://") or 'id="main-frame-error"' in source):
+        return ""
+    found = re.search(r"\b(ERR_[A-Z_]+)\b", source)
+    return found.group(1) if found else "ERR_UNKNOWN"
+
+
 def scrape(args) -> int:
     outcomes: List[PageOutcome] = []
     seen_keys = set()
@@ -611,7 +632,7 @@ def scrape(args) -> int:
         outcomes.append(first)
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
+            stop_reason = (proxy_check.load_failure_reason(pool) if first.load_failed
                            else page_flow.blocked_stop_reason(first.blocked_by))
             blocked = first.blocked_by is not None
         elif args.mode not in PAGINATED_MODES:
@@ -639,7 +660,7 @@ def scrape(args) -> int:
                 outcome = _fetch_one_page(session, args, pool, page_num, url)
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
+                    stop_reason = (proxy_check.load_failure_reason(pool) if outcome.load_failed
                                    else page_flow.blocked_stop_reason(outcome.blocked_by))
                     blocked = outcome.blocked_by is not None
                     break

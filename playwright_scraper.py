@@ -880,7 +880,7 @@ def scrape(args) -> int:
             outcomes.append(first)
 
             if not first.ok:
-                stop_reason = ("page_load_timeout" if first.load_failed
+                stop_reason = (proxy_check.load_failure_reason(pool) if first.load_failed
                                else page_flow.blocked_stop_reason(first.blocked_by))
                 blocked = first.blocked_by is not None
             elif args.mode not in PAGINATED_MODES:
@@ -909,7 +909,7 @@ def scrape(args) -> int:
                     failed = [o for o in rest if not o.ok]
                     if failed:
                         worst = min(failed, key=lambda o: o.page_num)
-                        stop_reason = ("page_load_timeout" if worst.load_failed
+                        stop_reason = (proxy_check.load_failure_reason(pool) if worst.load_failed
                                        else page_flow.blocked_stop_reason(worst.blocked_by))
                         blocked = any(o.blocked_by for o in rest)
                     elif exhausted:
@@ -938,7 +938,7 @@ def scrape(args) -> int:
                         outcome = _fetch_one_page(session, args, pool, page_num, url)
                         outcomes.append(outcome)
                         if not outcome.ok:
-                            stop_reason = ("page_load_timeout" if outcome.load_failed
+                            stop_reason = (proxy_check.load_failure_reason(pool) if outcome.load_failed
                                            else page_flow.blocked_stop_reason(outcome.blocked_by))
                             blocked = outcome.blocked_by is not None
                             break

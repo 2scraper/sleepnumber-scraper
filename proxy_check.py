@@ -91,6 +91,7 @@ PRECHECK_TIMEOUT = 15.0
 
 STOP_AUTH_FAILED = "proxy_auth_failed"
 STOP_BALANCE_EXHAUSTED = "proxy_balance_exhausted"
+STOP_UNREACHABLE = "proxy_unreachable"
 
 # Playwright's `request.resource_type` names, and the same three as CDP's
 # Fetch domain spells them (pyppeteer goes through that domain directly).
@@ -121,12 +122,13 @@ class ProxyCheck:
 
     @property
     def fatal(self) -> bool:
-        return self.outcome in ("auth_failed", "balance_exhausted")
+        return self.outcome in ("auth_failed", "balance_exhausted", "unreachable")
 
     @property
     def stop_reason(self) -> Optional[str]:
         return {"auth_failed": STOP_AUTH_FAILED,
-                "balance_exhausted": STOP_BALANCE_EXHAUSTED}.get(self.outcome)
+                "balance_exhausted": STOP_BALANCE_EXHAUSTED,
+                "unreachable": STOP_UNREACHABLE}.get(self.outcome)
 
 
 def _read_head(sock, limit: int = 65536) -> Tuple[int, str]:
@@ -156,6 +158,32 @@ def _auth_header(proxy) -> str:
     token = base64.b64encode(
         f"{proxy.username or ''}:{proxy.password or ''}".encode()).decode()
     return f"Proxy-Authorization: Basic {token}\r\n"
+
+
+def _connect(host: str, port: int, timeout: float):
+    """Connect to the proxy within ONE deadline for all its addresses.
+
+    socket.create_connection gives every A record the full timeout, so a host
+    with three dead addresses took three times PRECHECK_TIMEOUT."""
+    import time
+    deadline = time.monotonic() + timeout
+    infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+    share = max(timeout / max(len(infos), 1), 3.0)
+    last = None
+    for family, kind, proto, _, addr in infos:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        sock = socket.socket(family, kind, proto)
+        sock.settimeout(min(share, left))
+        try:
+            sock.connect(addr)
+            sock.settimeout(timeout)
+            return sock
+        except OSError as e:
+            last = e
+            sock.close()
+    raise last or socket.timeout("no address answered")
 
 
 def _classify(status: int, reason: str) -> Optional[ProxyCheck]:
@@ -198,8 +226,12 @@ def precheck(proxy_url: Optional[str], target_url: str,
     auth = _auth_header(proxy)
     sock = None
     try:
-        sock = socket.create_connection((proxy.hostname, proxy_port),
-                                        timeout=timeout)
+        sock = _connect(proxy.hostname, proxy_port, timeout)
+    except OSError as e:
+        # Nothing answered at the proxy's own address: no request can go
+        # anywhere through it, whatever the browser does next.
+        return ProxyCheck("unreachable", None, type(e).__name__)
+    try:
         if proxy.scheme == "https":
             sock = _tls_context().wrap_socket(
                 sock, server_hostname=proxy.hostname)
@@ -254,9 +286,38 @@ def precheck(proxy_url: Optional[str], target_url: str,
                 pass
 
 
+def load_failure_reason(pool, timeout: float = PRECHECK_TIMEOUT) -> str:
+    """The stop reason for a page that never loaded through `pool`.
+
+    Chromium reports a proxy host that does not answer as `net::ERR_TIMED_OUT`,
+    the same words as a slow site, so the error text cannot tell them apart.
+    One connect to the proxy itself can: `proxy_unreachable` when it fails,
+    `page_load_timeout` otherwise (and always without a proxy)."""
+    if not pool:
+        return "page_load_timeout"
+    proxy = urlparse(pool.current)
+    if proxy.scheme not in ("http", "https") or not proxy.hostname:
+        return "page_load_timeout"
+    try:
+        port = proxy.port or (443 if proxy.scheme == "https" else 80)
+        _connect(proxy.hostname, port, timeout).close()
+    except (OSError, ValueError) as e:
+        logger.error("The proxy %s does not accept a connection (%s): the "
+                     "page never loaded because of the proxy, not the site.",
+                     mask(pool.current), type(e).__name__)
+        return STOP_UNREACHABLE
+    return "page_load_timeout"
+
+
 def failure_message(check: ProxyCheck, proxy_url: Optional[str]) -> str:
     """The one-line explanation for a fatal pre-check. Never holds the login."""
     shown = mask(proxy_url)
+    if check.outcome == "unreachable":
+        return (f"Proxy pre-check: {shown} did not accept a connection "
+                f"({check.detail}) — the proxy host or port is wrong or down. "
+                f"Check the gateway host in {PROXY_SOURCES} (the 2Captcha "
+                f"dashboard gives eu. or na.proxy.2captcha.com). No browser "
+                f"was started and nothing was fetched.")
     if check.outcome == "auth_failed":
         return (f"Proxy pre-check: {shown} answered HTTP 407 — the gateway "
                 f"refused the credential (or the traffic balance is "
@@ -278,6 +339,16 @@ def gate(pool, target_url: str, timeout: float = PRECHECK_TIMEOUT
         return None
     exit_url = pool.current
     check = precheck(exit_url, target_url, timeout=timeout)
+    if check.outcome == "unreachable":
+        here = urlparse(exit_url)
+        others = [u for u in pool.proxies
+                  if (urlparse(u).hostname, urlparse(u).port) != (here.hostname, here.port)]
+        if others:
+            # Another gateway in the pool may answer: let rotation try it.
+            logger.warning("Proxy pre-check: %s did not accept a connection "
+                           "(%s); the pool has other hosts, continuing.",
+                           mask(exit_url), check.detail)
+            return None
     if check.fatal:
         logger.error("%s", failure_message(check, exit_url))
         return check
