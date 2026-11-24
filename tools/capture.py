@@ -88,7 +88,9 @@ DEFAULT_URLS = [
     # Crawl surface: robots.txt names the sitemaps, and a sitemap is the
     # cheapest complete list of product URLs a site will ever hand you.
     "https://www.sleepnumber.com/robots.txt",
-    "https://www.sleepnumber.com/sitemap.xml",
+    # The one robots.txt names. There is no plain /sitemap.xml: it is the
+    # site's own 404 page.
+    "https://www.sleepnumber.com/sitemap.xml.gz",
 ]
 
 _CRED_RE = re.compile(r"://[^/@\s]+:[^/@\s]+@")
@@ -183,6 +185,29 @@ def report(url, status, body, headers):
           + ", ".join(f"{k}({v})" for k, v in top))
 
 
+def report_sitemap(url, status, body, headers):
+    """A gzipped sitemap: how many URLs, and which first path segments."""
+    import gzip
+    print(f"\n=== {mask(url)}")
+    print(f"    HTTP {status}   {len(body):,} bytes   "
+          f"server={headers.get('server','?')}   "
+          f"type={headers.get('content-type','?').split(';')[0]}")
+    try:
+        xml = gzip.decompress(body).decode("utf-8", "replace")
+    except OSError as e:
+        print(f"    (not gzip: {e})")
+        return
+    locs = re.findall(r"<loc>([^<]+)</loc>", xml)
+    seg = {}
+    for loc in locs:
+        m = re.match(r"^https?://[^/]+(/[^/?#]+)", loc)
+        if m:
+            seg[m.group(1)] = seg.get(m.group(1), 0) + 1
+    top = sorted(seg.items(), key=lambda kv: -kv[1])[:8]
+    print(f"    sitemap: {len(locs)} URLs; top first-segments: "
+          + ", ".join(f"{k}({v})" for k, v in top))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -223,9 +248,17 @@ def main(argv=None):
             continue
 
         name = re.sub(r"[^A-Za-z0-9._-]+", "_", url.split("://", 1)[-1]).strip("_")[:120]
-        path = outdir / f"{name}.html"
-        path.write_bytes(r.content)
-        report(url, r.status_code, r.text, {k.lower(): v for k, v in r.headers.items()})
+        headers = {k.lower(): v for k, v in r.headers.items()}
+        if url.endswith(".gz") and r.status_code == 200:
+            # Saved as it came, not as .html: the fixtures tooling reads
+            # every captures/*.html as a page.
+            path = outdir / name
+            path.write_bytes(r.content)
+            report_sitemap(url, r.status_code, r.content, headers)
+        else:
+            path = outdir / f"{name}.html"
+            path.write_bytes(r.content)
+            report(url, r.status_code, r.text, headers)
         print(f"    saved: {path}")
         if r.status_code == 200:
             served += 1

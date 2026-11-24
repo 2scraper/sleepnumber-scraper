@@ -2244,13 +2244,74 @@ def test_proxy_traffic_savers(skips, check, group):
 
     dead = "http://u:" + _SAVERS_SECRET + "@127.0.0.1:" + str(_closed_port())
     res = proxy_check.precheck(dead, _SAVERS_URL, timeout=5)
-    ok &= check("a proxy that does not answer is a transport error, NOT "
-                "fatal (existing retry behaviour applies)",
-                res.outcome == "transport_error" and not res.fatal)
+    ok &= check("a proxy that does not accept a connection is unreachable "
+                "and fatal",
+                res.outcome == "unreachable" and res.fatal
+                and res.stop_reason == "proxy_unreachable")
     with _captured_output() as buf:
         gated = proxy_check.gate(ProxyPool([dead]), _SAVERS_URL, timeout=5)
-    ok &= check("gate() lets a transport error through, credential unprinted",
-                gated is None and _SAVERS_SECRET not in buf.getvalue())
+    ok &= check("gate() stops on an unreachable proxy, credential unprinted",
+                gated is not None and gated.stop_reason == "proxy_unreachable"
+                and _SAVERS_SECRET not in buf.getvalue())
+    other = "http://127.0.0.1:" + str(_closed_port() + 1)
+    with _captured_output():
+        gated = proxy_check.gate(ProxyPool([dead, other]), _SAVERS_URL, timeout=5)
+    ok &= check("gate() lets an unreachable exit through when the pool has "
+                "another host", gated is None)
+    import socket as _socket
+    calls = []
+
+    class _DeadSock:
+        def __init__(self, *a): pass
+        def settimeout(self, t): calls.append(t)
+        def connect(self, addr): raise TimeoutError("timed out")
+        def close(self): pass
+    three = [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("192.0.2.%d" % i, 2334))
+             for i in (1, 2, 3)]
+    with mock.patch.object(proxy_check.socket, "getaddrinfo", return_value=three), \
+            mock.patch.object(proxy_check.socket, "socket", _DeadSock):
+        res = proxy_check.precheck("http://u:" + _SAVERS_SECRET + "@gw.example:2334", _SAVERS_URL,
+                                   timeout=15)
+    ok &= check(f"three dead addresses share one 15 s deadline ({calls})",
+                res.outcome == "unreachable" and len(calls) == 3
+                and abs(sum(calls) - 15) < 0.01)
+    # -- a page that never loaded: the proxy or the site? -------------------
+    ok &= check("load_failure_reason: no proxy → page_load_timeout",
+                proxy_check.load_failure_reason(None) == "page_load_timeout")
+    with _captured_output() as buf:
+        why = proxy_check.load_failure_reason(ProxyPool([dead]), timeout=5)
+    ok &= check("load_failure_reason: a proxy that refuses connections → "
+                "proxy_unreachable, credential unprinted",
+                why == "proxy_unreachable" and _SAVERS_SECRET not in buf.getvalue())
+    import socket as _sock
+    live = _sock.socket()
+    live.bind(("127.0.0.1", 0))
+    live.listen(1)
+    try:
+        why = proxy_check.load_failure_reason(
+            ProxyPool(["http://127.0.0.1:%d" % live.getsockname()[1]]), timeout=5)
+    finally:
+        live.close()
+    ok &= check("load_failure_reason: a proxy that answers → page_load_timeout "
+                "(the site was slow)", why == "page_load_timeout")
+    try:
+        import selenium_scraper as _se
+
+        class _Drv:
+            # current_url keeps the requested URL, as chromedriver does.
+            def __init__(self, url, src):
+                self._href, self.page_source = url, src
+                self.current_url = "https://www.sleepnumber.com/categories/x"
+
+            def execute_script(self, js):
+                return self._href
+        ok &= check("selenium: Chrome's error page is a load failure, not a page",
+                    _se._chrome_error_page(_Drv("chrome-error://chromewebdata/",
+                        '<div class="error-code">ERR_TIMED_OUT</div>')) == "ERR_TIMED_OUT"
+                    and _se._chrome_error_page(_Drv("https://www.sleepnumber.com/x",
+                        "<html>ERR_TIMED_OUT in a product text</html>")) == "")
+    except ImportError:
+        pass
     ok &= check("no pool means no pre-check",
                 proxy_check.gate(None, _SAVERS_URL) is None)
     ok &= check("a socks5 exit is skipped, not refused",
@@ -3303,6 +3364,9 @@ def _drive_budget_run(engine, tmp, rows_on_page_1):
         stack.enter_context(mock.patch.object(engine, "_fetch_one_page",
                                               side_effect=fake_fetch))
         stack.enter_context(mock.patch.object(engine.time, "sleep"))
+        # The proxy here is a closed port: the pre-check is not under test.
+        stack.enter_context(mock.patch.object(engine.proxy_check, "gate",
+                                              return_value=None))
         buf = stack.enter_context(_captured_output())
         try:
             rc = engine.scrape(args)
@@ -3528,6 +3592,7 @@ def test_proxy_meter_in_the_http_client(skips):
                                             final_url=url, rows=_meter_rows(),
                                             state="ok")
         with mock.patch.object(http_scraper, "_fetch_one_page", side_effect=fake_fetch), \
+                mock.patch.object(http_scraper.proxy_check, "gate", return_value=None), \
                 mock.patch.object(http_scraper.page_flow, "plan_pages",
                                   return_value=[_SAVERS_URL + "?page=2",
                                                 _SAVERS_URL + "?page=3"]), \

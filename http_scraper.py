@@ -144,6 +144,7 @@ class PageOutcome:
     rows: List = field(default_factory=list)
     blocked_by: Optional[str] = None
     load_failed: bool = False
+    proxy_unreachable: bool = False
     state: Optional[str] = None
     html: Optional[str] = None
 
@@ -160,6 +161,10 @@ class PageOutcome:
 # Measured on the rotating 2Captcha gateway this repo was developed against:
 # a `ConnectionResetError` during the CONNECT handshake, surfacing as
 # requests' ConnectionError, on roughly one request in fifteen.
+# Connecting is timed apart from reading: requests applies the connect
+# timeout to every A record of the proxy host in turn.
+CONNECT_TIMEOUT = 10.0
+
 _PROXY_ERRORS = (requests.exceptions.ProxyError,
                  requests.exceptions.SSLError,
                  requests.exceptions.ConnectionError)
@@ -177,17 +182,21 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             logger.info("Using proxy exit %s", mask(proxy))
 
         response, last_error = None, None
+        proxy_failures = 0
         for attempt in range(1, args.retries + 1):
             logger.info("Fetching page %d: %s", page_num, url)
             proxy_meter.check(args)
             try:
-                response = session.get(url, headers=HEADERS, timeout=args.timeout,
+                response = session.get(url, headers=HEADERS,
+                                       timeout=(min(CONNECT_TIMEOUT, args.timeout), args.timeout),
                                        allow_redirects=True)
                 # Every hop crossed the proxy: the redirects, then the page.
                 for hop in list(response.history) + [response]:
                     proxy_meter.count_response(proxy_meter.of(args), hop)
                 break
             except _PROXY_ERRORS as exc:
+                if isinstance(exc, requests.exceptions.ProxyError):
+                    proxy_failures += 1
                 # Named on the spot: "the exit is dead" and "the site is slow"
                 # read identically in a traceback and want different answers.
                 last_error = f"proxy/transport failure: {_mask_credentials(exc)}"
@@ -206,6 +215,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
         if response is None:
             outcome.load_failed = True
+            outcome.proxy_unreachable = proxy_failures == args.retries
             outcome.state = "unknown"
             logger.error("Page %d: gave up after %d attempt(s). Last error: %s",
                          page_num, args.retries, last_error or "not recorded")
@@ -214,6 +224,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 continue
             return outcome
 
+        # A response after a rotation: the earlier exit's failure is history.
+        outcome.load_failed = outcome.proxy_unreachable = False
         html = response.text
         outcome.html = html
         outcome.final_url = response.url
@@ -326,7 +338,8 @@ def scrape(args) -> int:
             outcomes.append(first)
 
             if not first.ok:
-                stop_reason = ("page_load_timeout" if first.load_failed
+                stop_reason = (proxy_check.STOP_UNREACHABLE if first.proxy_unreachable
+                               else "page_load_timeout" if first.load_failed
                                else page_flow.blocked_stop_reason(first.blocked_by))
                 blocked = first.blocked_by is not None
             elif args.mode in page_flow.PAGINATED_MODES and args.pages > 1:
@@ -341,7 +354,8 @@ def scrape(args) -> int:
                     outcome = _fetch_one_page(session, args, pool, page_num, url)
                     outcomes.append(outcome)
                     if not outcome.ok:
-                        stop_reason = ("page_load_timeout" if outcome.load_failed
+                        stop_reason = (proxy_check.STOP_UNREACHABLE if outcome.proxy_unreachable
+                                       else "page_load_timeout" if outcome.load_failed
                                        else page_flow.blocked_stop_reason(outcome.blocked_by))
                         blocked = outcome.blocked_by is not None
                         break

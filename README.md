@@ -374,9 +374,9 @@ not found (exit 4), not as a block.
 |---|---|
 | **`http_scraper.py`** | **Recommended. No browser at all** — same rows, about a third of the time. |
 | `playwright_scraper.py` | A real browser, for when one is wanted. 52 rows, exit 0, complete. |
-| `puppeteer_scraper.py` | Byte-identical rows to Playwright on the same URL. pyppeteer downloads its own Chromium, which does not start on every system; then the run stops with exit 5 (`browser_launch_failed`) and `--chromium-path /path/to/chrome` points it at a local Chrome or Chromium. |
+| `puppeteer_scraper.py` | Byte-identical rows to Playwright on the same URL. pyppeteer downloads its own Chromium, which does not start on every system; then the run stops with exit 5 (`browser_launch_failed`) and `--chromium-path /path/to/chrome` points it at a local Chrome or Chromium. A proxy login is answered over CDP's Fetch domain, so it works in current Chrome. |
 | `selenium_scraper.py` | **Cannot authenticate a proxy** — see below. |
-| `scraper_api_client.py` | No local browser. Needs `--cdp-url` here. |
+| `scraper_api_client.py` | No local browser. Usually needs `--cdp-url` here. |
 
 ### You probably do not need a browser
 
@@ -449,7 +449,10 @@ full `ws://user:pass@host:port` and authenticate on the WebSocket upgrade;
 
 Measured 2026-09-17: the Scraper API's own exits are datacentre addresses, and
 this site answers them with the same 919-byte CloudFront 403 it gives any
-other. Route the fetch through a Scraping Browser session:
+other. Measured again 2026-11-11, two runs without `--cdp-url`: one 403, one
+200 with all 52 rows — the exit varies, so a run may get through, but do not
+build on it; a 403 ends with exit 3 and says so. Route the fetch through a
+Scraping Browser session:
 
 ```bash
 python3 scraper_api_client.py \
@@ -491,8 +494,11 @@ use:
   `status: failed`, `stop_reason: proxy_auth_failed` (or
   `proxy_balance_exhausted`). Any previous output and its `.meta.json` are
   left as they were. The message names the variable and never prints the
-  credential. If the proxy does not answer at all, the run goes on as
-  before. No pre-check runs without a proxy or with `--cdp-endpoint`.
+  credential. A proxy host that does not accept a connection at all ends
+  the run the same way, within about 15 seconds (one deadline for all of the
+  host's addresses), with `stop_reason: proxy_unreachable` — unless
+  `--proxy-file` holds another host, which the rotation then tries. No
+  pre-check runs without a proxy or with `--cdp-endpoint`.
 - **Images, video/audio and web fonts are not downloaded** by the browser
   engines through a local proxy. Playwright aborts them by resource type,
   pyppeteer through CDP's Fetch domain, and Selenium by file extension with
@@ -547,7 +553,7 @@ downgrading something you wanted. Use a virtualenv per engine, and create it
 
 ```bash
 python3 -m venv ~/.venvs/sleepnumber-playwright
-~/.venvs/sleepnumber-playwright/bin/pip install -r requirements-playwright.txt
+~/.venvs/sleepnumber-playwright/bin/pip install -r requirements.txt -r requirements-playwright.txt
 ```
 
 The offline checks (`smoke_test.py`, `pytest`) read every Python file inside
@@ -614,9 +620,11 @@ python3 playwright_scraper.py --mode product --category cm-mattress
 ## Diffing two runs
 
 ```bash
+# once a day: each run writes a file named by its date
 python3 playwright_scraper.py --category mattresses --out "mattresses_$(date +%F)"
-python3 diff_runs.py --old mattresses_2026-09-16.json \
-                     --new mattresses_2026-09-17.json
+# compare the two most recent runs
+set -- $(ls mattresses_????-??-??.json | tail -n 2)
+python3 diff_runs.py --old "$1" --new "$2"
 ```
 
 Keyed on `sku`, so per size variant. A price difference that comes with a
@@ -690,5 +698,5 @@ All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another
 
 MIT. Not affiliated with, endorsed by, or connected to Sleep Number
 Corporation. Respect `robots.txt`, the site's terms and a sane request rate;
-this tool defaults to one page at a time with a delay and refuses
-`--concurrency` outright.
+this tool fetches one page at a time with a delay; `--concurrency` is
+accepted and has no effect.
